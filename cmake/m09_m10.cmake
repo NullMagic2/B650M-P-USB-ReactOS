@@ -2,7 +2,12 @@
 # Purpose: Reuse the generic standalone package engine with exact source/payload snapshots.
 # Created: 2026-10-25
 # Architecture: Host metadata never installs drivers or opens a physical disk.
-set(XHCI_SHARED_PACKAGES "${PROJECT_SOURCE_DIR}/../qemu-lightning-general-setup/lightning/guest-packages"
+if(EXISTS "${PROJECT_SOURCE_DIR}/guest-packages/guest/sha256.cpp")
+    set(default_shared_packages "${PROJECT_SOURCE_DIR}/guest-packages")
+else()
+    set(default_shared_packages "${PROJECT_SOURCE_DIR}/../qemu-lightning-general-setup/lightning/guest-packages")
+endif()
+set(XHCI_SHARED_PACKAGES "${default_shared_packages}"
     CACHE PATH "Shared generic provider planner and native backend source")
 if(EXISTS "${XHCI_SHARED_PACKAGES}/guest/sha256.cpp" AND NOT CMAKE_CROSSCOMPILING)
     add_executable(xhci_package_provider src/tools/package_provider.cpp

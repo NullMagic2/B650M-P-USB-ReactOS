@@ -319,7 +319,6 @@ int main(int argc, char **argv) {
         package(root, "xhci", "notices/GPL-2.0.txt",
                 {{"xhci/xhci.sys", "system32/drivers/xhci.sys", previous_controller, {}, true},
                  {"xhci/xhci.inf", {}, {}, {}, false},
-                 {"source/complete-source.tar.gz", {}, {}, {}, false},
                  {"INSTALL.txt", {}, {}, {}, false},
                  {"notices/MS-PL.txt", {}, {}, {}, false},
                  {"notices/MinGW.txt", {}, {}, {}, false},

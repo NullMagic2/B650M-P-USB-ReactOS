@@ -6,7 +6,8 @@ Architecture: The shared Qemu-Lightning NT5 engine owns installation and recover
 Run XHCI-ReactOS-Setup-i386.exe inside the matching native ReactOS i386 system.
 This one offline executable carries the operational HCD, exact five board PCI
 profiles, USB2/USB3 root INFs, genuine patched USBHUB/USBSTOR/disk/HIDUSB modules,
-complete corresponding source and separate GPL/MS-PL/compiler notices. No manager,
+separate GPL/MS-PL/compiler notices. Project source and compatibility patches
+are available at https://github.com/NullMagic2/B650M-P-USB-ReactOS. No manager,
 separate prerequisite download or diagnostic module is required.
 
 The original baseline hashes are explicit. Unknown system files and unreviewed
@@ -28,7 +29,7 @@ Present devices require the real installed-INF hash and fresh PnP start status.
 Absent devices are reported as waiting; setup does not fabricate a controller.
 
 Use the same preserved executable with:
-  --extract    export verified payloads/complete source to a new chosen directory
+  --extract    export verified runtime payloads to a new chosen directory
   --check      verify the plan without installing or changing configuration
   --install    install without the opening confirmation; exit3010 needs restart
   --resume     bounded automatic persistent resume
@@ -58,17 +59,19 @@ Successful installation, source completion and emulator operation do not qualify
 physical AMD-controller operation, motherboard interrupt routing or USB durability.
 
 Source rebuild
-  complete-source.tar.gz contains source/xhci-reactos, source/guest-packages and
-  the exact genuine source/reactos snapshot used for the SDK/class rebuild.
-  source/reactos-installed-baseline and installed-baseline-build contain the
-  separately identified installed OS source/configuration; its Debug kernel is
-  not mislabeled as the newer SDK Release kernel.
-  Build that matching i386 ReactOS SDK, then configure xhci-reactos with its source
-  and build paths plus XHCI_SHARED_PACKAGES pointing to source/guest-packages.
+  Driver/installer source, compatibility patches and pinned upstream input hashes
+  are at https://github.com/NullMagic2/B650M-P-USB-ReactOS.
+  The installer contains runtime modules and notices, without source archives.
+  Native builds require matching ReactOS headers/generated headers and kernel/HAL
+  import libraries. Rebuilding compatibility modules also requires the original
+  upstream ReactOS source files identified by evidence manifests. These inputs
+  are external build dependencies; whole operating-system source trees are not
+  copied into the project source archive or the installer.
+  Configure XHCI_SHARED_PACKAGES to the checkout's guest-packages directory.
   XHCI_NATIVE_CONTROLLER, XHCI_NATIVE_BOOT and XHCI_NATIVE_USB_COMPATIBILITY build
   real native modules. XHCI_BUILD_PACKAGE_BACKEND builds the shared i386 GUI.
-  xhci_package_provider produces the pinned provider catalog; xhci_standalone
-  calls the unchanged shared host planner with that catalog and matching backend.
+  The provider stages a project-source archive separately from the selected
+  runtime catalog payloads. The unchanged planner bundles only selected files.
   GCC/MinGW verification is separate from the unperformed MSVC build.
 
 Persistent image preparation

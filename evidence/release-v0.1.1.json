@@ -1,0 +1,47 @@
+{
+  "release": "v0.1.1",
+  "installer_sha256": "1cd0da8cceafbca5800ba8fd75d6503ee7405f890a26c7d55e500af6acddc82e",
+  "installer_bytes": 1562556,
+  "embedded_files": 18,
+  "native_modules_identical_to_v0_1_0": 5,
+  "source_embedded": false,
+  "whole_reactos_tree_embedded": false,
+  "dependencies_lock": {
+    "schema": 1,
+    "architecture": "i386",
+    "sdk_revision": "a97c8a2cdcf6a9a7f5cc543951a02ccb7a80d8ca",
+    "download_base": "https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/download/v0.1.1",
+    "components": {
+      "sdk": {
+        "filename": "reactos-i386-sdk-a97c8a2-v1.tar.gz",
+        "sha256": "5cfc1f68ba284c8b94c3e866a249430e7dc1836a754174bc182aaf0e8b522821",
+        "bytes": 513389,
+        "files": 68,
+        "unpacked_bytes": 3703921,
+        "manifest_sha256": "4c76ade92726215e0ed37fb8f784238d67c30055a824416fa8e411cd30360489"
+      },
+      "usb": {
+        "filename": "reactos-i386-usb-a97c8a2-v1.tar.gz",
+        "sha256": "8a658c1f5f48967be1615546b31ae30d104d9840d8bad747a5ddf9b8dc18c6e6",
+        "bytes": 480859,
+        "files": 88,
+        "unpacked_bytes": 2559769,
+        "manifest_sha256": "5761b632674d980b7d3fcda5f084eafb097539bbaa931a2e6f95c7101ebc9b54"
+      },
+      "image": {
+        "filename": "reactos-i386-image-a97c8a2-v1.tar.gz",
+        "sha256": "23af264915902898a9f1ff208d4e25ca468cd66a827364fd16e8af4a2fd10d0e",
+        "bytes": 50623,
+        "files": 5,
+        "unpacked_bytes": 205170,
+        "manifest_sha256": "af29ba9443ff01e22a2398f96d6883aa7916f3a65e56c62395d4aef8aa6682e1"
+      }
+    }
+  },
+  "native_minimal_cache_build": "controller, diagnostic, boot, USBHUB/USBSTOR/disk/HIDUSB and image assembler all compiled/linked",
+  "kernel_patch_bundled": false,
+  "host_test_suites_passed": 5,
+  "dependency_cache_corruption_rejected": true,
+  "project_source_archive_bytes": 253926,
+  "whole_os_trees_in_project_source": false
+}

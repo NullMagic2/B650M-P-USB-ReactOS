@@ -2,7 +2,7 @@
 # Purpose: Build portable discovery and an opt-in genuine ReactOS diagnostic.
 # Created: 2026-10-25
 # Architecture: All outputs live in Binaries/.build; external SDK inputs are read-only.
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.19)
 project(xhci_reactos LANGUAGES CXX)
 option(XHCI_TESTS "Build discovery boundary checks" ON)
 option(XHCI_SANITIZERS "Enable host ASan/UBSan" OFF)
@@ -41,6 +41,9 @@ if(XHCI_TESTS)
     target_link_libraries(xhci_firmware_tests PRIVATE xhci_core)
     xhci_cpp(xhci_firmware_tests)
     add_test(NAME xhci_firmware_handoff COMMAND xhci_firmware_tests)
+endif()
+if(XHCI_NATIVE_DIAGNOSTIC OR XHCI_NATIVE_CONTROLLER OR XHCI_NATIVE_BOOT OR XHCI_NATIVE_USB_COMPATIBILITY OR XHCI_IMAGE_TOOLS)
+    include(cmake/dependencies.cmake)
 endif()
 include(cmake/m03_m04.cmake OPTIONAL)
 include(cmake/m05_m06.cmake)

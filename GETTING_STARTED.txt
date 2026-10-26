@@ -1,38 +1,51 @@
 USB Controllers (B650M-P) – ReactOS
 
 Install
-  Download the single EXE from the GitHub release and run it in the matching
-  ReactOS i386 guest. Follow all required restarts. See packaging/INSTALL.txt
-  for extraction, installation, resume and rollback options.
+  Download B650M-P-USB-ReactOS-Setup-i386.exe from the latest GitHub release.
+  Run it in the matching ReactOS i386 system and follow required restarts.
+  The installer includes runtime modules and notices; it contains no source archive.
+  See packaging/INSTALL.txt for extraction, installation, resume and rollback.
 
 Host build
-  cmake -S . -B Binaries/.build/host -DXHCI_SANITIZERS=ON \
-    -DXHCI_SHARED_PACKAGES="$PWD/guest-packages"
+  cmake -S . -B Binaries/.build/host -DXHCI_SANITIZERS=ON
   cmake --build Binaries/.build/host -j4
   ctest --test-dir Binaries/.build/host --output-on-failure
   Binaries/.build/host/xhci_inventory
-  Inventory reads identity only and never changes Linux controller bindings.
+  Host builds do not download ReactOS dependencies. Inventory reads identity only.
   If LeakSanitizer is unavailable under tracing, set ASAN_OPTIONS=detect_leaks=0;
-  that limitation is separate from ASan and UBSan qualification.
+  ASan/UBSan and LeakSanitizer qualification remain separately identified.
 
-Native build
-  Extract the release EXE with --extract to obtain source/complete-source.tar.gz.
-  This archive includes exact ReactOS SDK and installed-baseline source snapshots,
-  build configuration, driver source and the shared package engine. Preserve the
-  separate GPL/MS-PL notices. The release controller source matches src/ here;
-  compat/reactos/pnp* adds the separately tested experimental kernel patch.
+Native driver build (Linux, i686-w64-mingw32 GCC13)
+  Install CMake 3.19+, GNU make or Ninja, and the MinGW i386 compiler toolchain.
+  cmake -S . -B Binaries/.build/native -DXHCI_NATIVE_CONTROLLER=ON
+  cmake --build Binaries/.build/native --target xhci_native_controller -j4
+  Output: Binaries/.build/native/native/xhci-controller-i386.sys
 
-  Configure with XHCI_REACTOS_SOURCE and XHCI_REACTOS_BUILD pointing to a matching
-  i386 ReactOS source/build SDK, and XHCI_SHARED_PACKAGES pointing to guest-packages.
-  XHCI_NATIVE_CONTROLLER=ON enables xhci_native_controller.
-  XHCI_NATIVE_USB_COMPATIBILITY=ON enables xhci_native_usb_compatibility.
-  XHCI_NATIVE_BOOT=ON enables the boot bridge.
-  XHCI_BUILD_PACKAGE_BACKEND=ON enables the shared GUI installer backend.
-  See cmake/m09_m10.cmake for the provider catalog/standalone packaging inputs.
-  GCC13/MinGW i386 compilation is verified; an MSVC build is not verified.
+  Configuration downloads only the pinned SDK dependencies into dependencies/:
+  required headers, generated headers and kernel/HAL import libraries (about501KiB).
+  The complete ReactOS source/build tree is not downloaded. dependencies.lock.json
+  fixes the exact archive and individual file-manifest checksums. Cached files are
+  verified and reused on subsequent configurations. The directory is gitignored.
+  XHCI_DOWNLOAD_DEPENDENCIES=OFF supports an already populated offline cache.
+
+  Add XHCI_NATIVE_DIAGNOSTIC=ON or XHCI_NATIVE_BOOT=ON for the separate diagnostic
+  module or boot bridge. Diagnostic output must never be installed as the HCD.
+  Add XHCI_NATIVE_USB_COMPATIBILITY=ON and build xhci_native_usb_compatibility to
+  rebuild patched USBHUB/USBSTOR/disk/HIDUSB. Only that option fetches the additional
+  upstream module source, link libraries/resources and host fixup tool (about470KiB).
+  The automatic compatibility tool cache currently supports Linux x86_64 hosts.
+  XHCI_IMAGE_TOOLS=ON separately fetches only the small FatFs image-tool component.
+
+  Explicit matching XHCI_REACTOS_SOURCE and XHCI_REACTOS_BUILD paths still support
+  an external SDK and bypass automatic downloads. Set both together. Experimental
+  PnP kernel rebuilding remains separate and requires its explicitly audited SDK;
+  the automatic driver dependencies contain no kernel implementation source.
+  XHCI_BUILD_PACKAGE_BACKEND=ON builds the shared i386 GUI installer backend.
+  See cmake/m09_m10.cmake for provider catalog and standalone packaging inputs.
+  GCC13/MinGW i386 compilation is verified; MSVC compilation is not verified.
 
 Scope
-  These drivers target the exact reviewed MSI PRO B650M-P PCI profiles and a
-  matching ReactOS i386 build. The installer rejects unknown baseline files.
-  The installer does not install the experimental PnP kernel patch needed for
-  the physical unplug/reconnect result. Physical USB-root boot is unqualified.
+  Exact reviewed MSI PRO B650M-P PCI profiles and ReactOS i386 system-file hashes.
+  The installer rejects unknown baseline files and does not install the experimental
+  PnP kernel patch required for the validated physical unplug/reconnect result.
+  Physical motherboard USB-root boot remains unqualified.

@@ -4,7 +4,7 @@ USB host-controller drivers tailored for **ReactOS i386** on the **MSI PRO B650M
 
 [Download the installer](https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/latest)
 
-Download **B650M-P-USB-ReactOS-Setup-i386.exe**, copy it into ReactOS, and run it. One offline installer includes the controller driver, required USB compatibility modules, recovery support, license notices and complete corresponding source. Follow the installer through its required restarts; no Qemu-Lightning manager or separate prerequisite download is needed.
+Download **B650M-P-USB-ReactOS-Setup-i386.exe**, copy it into ReactOS, and run it. One offline installer includes the controller driver, required USB compatibility modules, recovery support and license notices. Source is maintained separately in this repository. Follow the installer through its required restarts; no Qemu-Lightning manager or separate prerequisite download is needed.
 
 The installer checks the reviewed ReactOS system-file hashes and exact controller identities. Other ReactOS builds are refused rather than replacing unknown system files. These drivers are tailored for ReactOS; Windows compatibility is not established, and interfaces and supported builds are subject to change.
 
@@ -14,6 +14,15 @@ The current package supports control, bulk and interrupt transfers, USB2/USB3 lo
 
 Selected physical-controller storage read/write, flush and restart/readback tests passed. **Known issue:** physical unplug/reconnect recovery required the ReactOS PnP kernel patch under `compat/reactos/pnp*`; that kernel change is not installed by this package. Physical motherboard USB-root boot and other board controllers remain unqualified. The full installer install/rollback runtime matrix has not been completed.
 
-Build instructions are in [GETTING_STARTED.txt](GETTING_STARTED.txt); installation and recovery options are in [packaging/INSTALL.txt](packaging/INSTALL.txt). Run the installer with `--extract` to export its verified payloads and complete corresponding source, including the exact ReactOS source snapshots and build configurations.
+Build instructions are in [GETTING_STARTED.txt](GETTING_STARTED.txt); installation and recovery options are in [packaging/INSTALL.txt](packaging/INSTALL.txt). Run the installer with `--extract` to export its verified runtime payloads. No source archive or full ReactOS tree is embedded in the installer.
+
+Build the native driver with:
+
+```sh
+cmake -S . -B Binaries/.build/native -DXHCI_NATIVE_CONTROLLER=ON
+cmake --build Binaries/.build/native --target xhci_native_controller -j4
+```
+
+The build automatically downloads the matching headers and kernel/HAL import libraries into **`dependencies/`** (about 501 KiB compressed). Only enabled optional components download extra inputs. Versions and checksums are pinned in `dependencies.lock.json`; cached files are verified and reused. A full ReactOS checkout is unnecessary for these driver targets. See `GETTING_STARTED.txt` for the Linux/MinGW prerequisites and optional class-module build.
 
 The controller is **GPL-2.0-only**. The shared installer and ReactOS patches preserve their upstream GPL terms; the separate disk compatibility module uses MS-PL. See [LICENSE](LICENSE), [THIRD_PARTY.txt](THIRD_PARTY.txt), and the per-module notices.

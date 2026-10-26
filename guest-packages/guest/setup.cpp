@@ -864,7 +864,7 @@ class Setup {
             }
             BROWSEINFOW browse{};
             browse.lpszTitle =
-                L"Choose a parent folder for the verified package and complete source.";
+                L"Choose a parent folder for the verified package files.";
             browse.ulFlags = BIF_RETURNONLYFSDIRS;
             const auto selected = SHBrowseForFolderW(&browse);
             wchar_t parent[MAX_PATH]{};
@@ -878,10 +878,10 @@ class Setup {
             const auto output = std::wstring(parent) + L"\\GuestPackage-" + digest(ini);
             const auto ok = bundle.export_files(output);
             MessageBoxW(nullptr,
-                        ok ? (L"Verified files and source were copied to:\n" + output).c_str()
+                        ok ? (L"Verified package files were copied to:\n" + output).c_str()
                            : L"Export could not finish. Existing folders are never replaced; "
                              L"choose a new parent folder.",
-                        L"Guest Package Source", ok ? MB_ICONINFORMATION : MB_ICONERROR);
+                        L"Guest Package Export", ok ? MB_ICONINFORMATION : MB_ICONERROR);
             return ok ? 0 : 1;
         }
         GetWindowsDirectoryW(path, MAX_PATH);
