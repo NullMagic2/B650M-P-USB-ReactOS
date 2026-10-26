@@ -1,0 +1,132 @@
+Module: xhci.provenance
+Purpose: Preserve protocol references, upstream notices and actual platform limitations.
+Created: 2026-10-25
+Architecture: Imported references are not linked unchanged into native code.
+
+Board target
+  MSI PRO B650M-P (MS-7E27), revision 1.0, installed BIOS 1.I2.
+  Actual identities and logical USB roots are in evidence/motherboard-inventory.json.
+  Public product specification:
+  https://www.msi.com/Motherboard/PRO-B650M-P/Specification
+  Its connector list does not establish the Linux root-bus-to-physical-socket map.
+
+Specification
+  xHCI Requirements Specification r1.2c, Intel public document 868295:
+  https://www.intel.com/content/www/us/en/content-details/868295/extensible-host-controller-interface-for-universal-serial-bus-xhci-requirements-specification-r1-2c.html
+  The public specification is a reference, not bundled copyrighted text.
+
+Pinned Linux reference
+  Repository: https://github.com/torvalds/linux
+  Tag: v6.12
+  Commit: adc218676eef25575469234709c2d87185ca223a
+  third_party/linux/xhci.h, xhci-ext-caps.h and xhci-pci.c are unchanged.
+  Their original GPL and copyright notices, including Intel and Sarah Sharp,
+  remain intact. Per-file hashes and original Git blobs are recorded in
+  evidence/linux-source-manifest.json. This is a pinned baseline, not a latest claim.
+  src/core/controller.cpp adapts register-field encodings and extended-capability
+  pointer semantics into bounded allocation-free C++17 with explicit read callbacks.
+  It neither executes Linux source nor enables Linux AMD PCI quirk policies.
+  Linux assigns XHCI_DEFAULT_PM_RUNTIME_ALLOW to AMD 1022:43F7. NT runtime power
+  policy needs its own implementation and qualification; vendor quirks remain disabled.
+  The authored host-controller/core code is GPL-2.0-only. See LICENSE; separate
+  compatibility modules preserve their upstream notices and license terms.
+
+Additional consulted implementation references
+  Linux v6.12 drivers/usb/host/xhci.c, xhci_update_hub_device:
+  https://raw.githubusercontent.com/torvalds/linux/v6.12/drivers/usb/host/xhci.c
+  GPL-2.0, Copyright 2008 Intel Corp., author Sarah Sharp.
+  src/reactos/usb_extensions.cpp uses version-correct hub-context command choice.
+  src/reactos/runtime_power.cpp also follows the native command-ring lifetime
+  requirement checked against xhci_save_registers, xhci_clear_command_ring and
+  xhci_set_cmd_ring_deq: empty command-ring reinitialization and aligned CRCR reload
+  before restore. No Linux API or runtime is linked.
+  Transfer/event semantics were cross-checked with Linux xhci-ring.c and then
+  verified against Intel document625472 revision1.2b, sections4.6.9/4.11.2.4:
+  https://cdrdv2-public.intel.com/625472/625472_xHCI_Rev1_2b.pdf
+  TD Size counts unsent packets across a partial packet split, and Stopped Short
+  Packet reports an actual-byte accumulator rather than an ordinary residual.
+  Physical AMD qualification also exposed the required empty-ring Force Stopped
+  Event in section4.6.9: code27 precedes Stop Endpoint command completion even
+  without a queued TD. The native owner validates its stop generation and ring
+  bounds; only the actual command/dequeue sequence establishes DMA retirement.
+  Linux v6.12 xhci-ring.c handle_tx_event independently handles empty TD lists:
+  https://raw.githubusercontent.com/torvalds/linux/v6.12/drivers/usb/host/xhci-ring.c
+  The specification is consulted, not redistributed.
+
+Repository-owned ReactOS compatibility
+  compat/reactos/usbstor-transport.patch and usbhub-superspeed.patch retain their
+  original source notices and add C++ hooks for bounded BOT byte results, native
+  SuperSpeed/hub contracts and joined class-device cleanup. Source baseline hashes
+  are in evidence/m07-usbstor-patch-inputs.json and m08-usbhub-patch-inputs.json.
+  compat/reactos/disk-shutdown.patch preserves cache/unlock failure through final
+  shutdown completion. The separately linked disk.sys source and its new hook use
+  MS-PL, matching drivers/storage/class/disk/license.txt. A preserved copy is at
+  compat/reactos/disk/license.txt; baseline hashes are in m07-disk-patch-inputs.json.
+  This module does not link GPL host-controller/core helpers. Existing classpnp
+  storage CDB/FUA/flush ordering is reused. Owned staging builds do not alter the SDK
+  or install class modules. Generated native artifacts retain their separate scope.
+  The HIDUSB cancellation compatibility retains genuine NT/USBD cancellation
+  results instead of asserting or inventing success. Original driver authors
+  Michael Martin and Johannes Anderwald and GPL notices remain in the staged C
+  source; evidence/m10-hidusb-patch-inputs.json pins its inputs.
+  Boot-usage compatibility forwards actual disk-to-controller paging-path
+  notifications; evidence/m10-boot-patch-inputs.json pins those additional inputs.
+  Child removal flushes only its live device handle before retirement. The
+  previous USBHUB-wide NULL flush cancelled unrelated sibling HID requests.
+
+Image assembly and loader references
+  The host C++ image assembler links unchanged ReactOS-vendored FatFs R0.11a,
+  Copyright(C)2015 ChaN. The ff.c/ff.h notice permits redistribution with its
+  copyright, condition and disclaimer retained. Full corresponding files and
+  their notice remain in the supplied ReactOS source; no FAT implementation is
+  rewritten or linked into the native HCD. evidence/m10-fatfs-inputs.json pins
+  ff.c, ff.h, ffconf.h, diskio.h and option/ccsbcs.c used by the host build.
+  Genuine FreeLoader MBR/FAT32 sectors, freeldr.sys and matching rosload.exe
+  retain their original ReactOS notices and source. Loader hashes accompany the
+  image identity; no host firmware, physical disk or USB stick is modified.
+
+ReactOS compatibility audit
+  Existing SDK source baseline: a97c8a2cdcf6a9a7f5cc543951a02ccb7a80d8ca.
+  The saved installed OS uses a distinct Debug i386 build. Its exact kernel
+  SHA2562cbf353890304819960a5fb94752c42aa56dac700d809da3b0e571a1bcbaeedc
+  matches work/ros-build-release-i386/ntoskrnl/ntoskrnl.exe. That build cache names
+  work/reactos-release-source, CMAKE_BUILD_TYPE=Debug, DBG=TRUE and KDBG=TRUE.
+  The kernel embeds20261021-unknown-revision; the existing generated build header
+  was regenerated later and says20261022. Neither is treated as a known Git hash.
+  evidence/m10-installed-os-provenance.json records the binary/source/build
+  context without claiming a byte-identical historical rebuild. Full installed
+  baseline and newer SDK source contexts are supplied separately.
+  Legacy sdk/include/reactos/drivers/usbport/usbmport.h contains ULONG StartPA,
+  BufferPA and other 32-bit miniport-facing transfer-buffer addresses. usb200.h
+  USB_DEVICE_SPEED defines low, full and high speed only. These are real design
+  constraints, not permission to truncate logical DMA addresses or pretend USB3
+  is high-speed USB2. The intended WDM HCD must bridge actual NT USB contracts.
+  Current upstream usbxhci/controller.cpp still leaves MMIO/interrupt setup and
+  reset/start callbacks UNIMPLEMENTED. Audit capture on 2026-10-25:
+  Git blob 757248711152fd38839575803b3bab9534220770.
+  https://github.com/reactos/reactos/blob/master/drivers/usb/usbxhci/controller.cpp
+  No current upstream source or WDF/UCX implementation is bundled as a working HCD.
+
+Requested document conventions
+  docs/imported/rtl8125/STYLE_GUIDE.md and ARCHITECTURE.md are unchanged snapshots
+  from the RTL8125 project. Their original network and GPU inventories do not
+  describe this xHCI implementation. evidence/document-imports.json pins them.
+  Active project documents adapt the allocation, IRQL, lifecycle, source scoring
+  and evidence conventions to USB. Tests and documentation earn no code credit.
+
+Host operations
+  Inventory reads DMI and PCI sysfs identity/resources/root-bus metadata only.
+  It does not open resourceN, detach/reset a USB controller, alter a PCI binding,
+  modify the external SDK or write any host disk/USB stick. Linux xhci_hcd remains
+  bound after guarded physical sessions. Inventory alone establishes no transfer
+  success; actual selected-controller results are recorded separately in M11.
+
+Experimental ReactOS PnP parent lifetime compatibility
+  compat/reactos/pnp-parent-lifetime.patch adapts the existing GPL-2.0-or-later
+  ntoskrnl/io/pnpmgr/devnode.c parent-link lifetime. The original Casper Hornstrup,
+  Herve Poussineau and Cameron Gutman notices remain in the staged source.
+  The authored C++ owner uses genuine NT object references. The isolated build
+  reuses installed-OS baseline kernel2cbf353890304819960a5fb94752c42aa56dac700d809da3b0e571a1bcbaeedc
+  without modifying its external SDK. This candidate is not in delivered images;
+  runtime qualification and exact source hashes are recorded in
+  evidence/m11-pnp-parent-candidate.json. No foreign references are discarded.

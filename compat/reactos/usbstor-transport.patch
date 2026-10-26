@@ -1,0 +1,209 @@
+--- a/drivers/usb/usbstor/usbstor.h
++++ b/drivers/usb/usbstor/usbstor.h
+@@ -7,6 +7,7 @@
+ #include <usbbusif.h>
+ #include <usbdlib.h>
+ #include <classpnp.h>
++#include <transport.hpp>
+ 
+ #define USB_STOR_TAG 'sbsu'
+ 
+@@ -106,6 +107,10 @@
+     };
+     URB Urb;
+     SCSI_REQUEST_BLOCK SenseSrb;
++    ULONG ExpectedTransferLength;
++    ULONG ActualTransferLength;
++    ULONG ActiveExpectedLength;
++    ULONG ActiveActualLength;
+ } IRP_CONTEXT, *PIRP_CONTEXT;
+ 
+ typedef struct __COMMON_DEVICE_EXTENSION__
+--- a/drivers/usb/usbstor/scsi.c
++++ b/drivers/usb/usbstor/scsi.c
+@@ -170,9 +170,18 @@
+     }
+ 
+     // now check the CSW packet validity
+-    if (!USBSTOR_IsCSWValid(Context) || Context->csw.Status == CSW_STATUS_PHASE_ERROR)
++    if (!USBSTOR_IsCSWValid(Context) ||
++        !USBSTOR_XhciApplyCsw(&Context->csw,
++                              Context->Urb.UrbBulkOrInterruptTransfer.TransferBufferLength,
++                              PtrToUlong(Context->Irp), Context->ExpectedTransferLength,
++                              Context->ActualTransferLength, Request))
+     {
+         goto ResetRecovery;
++    }
++
++    if (Request == FDODeviceExtension->ActiveSrb)
++    {
++        Context->ActiveActualLength = Request->DataTransferLength;
+     }
+ 
+     // finally check for CSW errors
+@@ -195,13 +204,18 @@
+         // the command is correct but with failed status - issue request sense
+         DPRINT("USBSTOR_CSWCompletionRoutine: CSW_STATUS_COMMAND_FAILED\n");
+ 
+-        ASSERT(FDODeviceExtension->ActiveSrb == Request);
++        if (Request != FDODeviceExtension->ActiveSrb)
++        {
++            Request = FDODeviceExtension->ActiveSrb;
++            USBSTOR_XhciFailedSense(Irp, Request);
++            goto CompleteRequest;
++        }
+ 
+         // setting a generic error status, additional information
+         // should be read by higher-level driver from SenseInfoBuffer
+         Request->SrbStatus = SRB_STATUS_ERROR;
+         Request->ScsiStatus = 2;
+-        Request->DataTransferLength = 0;
++        // Keep validated partial bytes while the existing sense path runs.
+ 
+         DPRINT("Flags: %x SBL: %x, buf: %p\n", Request->SrbFlags, Request->SenseInfoBufferLength, Request->SenseInfoBuffer);
+ 
+@@ -216,6 +230,7 @@
+         Irp->IoStatus.Status = STATUS_IO_DEVICE_ERROR;
+     }
+ 
++CompleteRequest:
+     Irp->IoStatus.Information = Request->DataTransferLength;
+ 
+     // terminate current request
+@@ -231,6 +246,9 @@
+     Irp->IoStatus.Information = 0;
+     Irp->IoStatus.Status = STATUS_IO_DEVICE_ERROR;
+     Request->SrbStatus = SRB_STATUS_BUS_RESET;
++    USBSTOR_XhciInterruptedResult(Irp, Request,
++                                 Context->ActiveExpectedLength,
++                                 Context->ActiveActualLength);
+ 
+     USBSTOR_QueueTerminateRequest(PDODeviceExtension->LowerDeviceObject, Irp);
+     USBSTOR_QueueResetDevice(FDODeviceExtension);
+@@ -276,6 +294,15 @@
+     Request = IoStack->Parameters.Scsi.Srb;
+     PDODeviceExtension = (PPDO_DEVICE_EXTENSION)IoStack->DeviceObject->DeviceExtension;
+ 
++    Context->ActualTransferLength = USBSTOR_XhciDataActual(
++        Irp->IoStatus.Status, Context->Urb.UrbHeader.Status,
++        Context->ExpectedTransferLength,
++        Context->Urb.UrbBulkOrInterruptTransfer.TransferBufferLength);
++    if (Request == FDODeviceExtension->ActiveSrb)
++    {
++        Context->ActiveActualLength = Context->ActualTransferLength;
++    }
++
+     // for Sense Request a partial MDL was already freed (if existed)
+     if (Request == FDODeviceExtension->ActiveSrb &&
+         Context->Urb.UrbBulkOrInterruptTransfer.TransferBufferMDL != Irp->MdlAddress)
+@@ -309,9 +336,14 @@
+     }
+     else
+     {
++        Request = FDODeviceExtension->ActiveSrb;
++        IoStack->Parameters.Scsi.Srb = Request;
+         Irp->IoStatus.Information = 0;
+         Irp->IoStatus.Status = STATUS_IO_DEVICE_ERROR;
+         Request->SrbStatus = SRB_STATUS_BUS_RESET;
++        USBSTOR_XhciInterruptedResult(Irp, Request,
++                                     Context->ActiveExpectedLength,
++                                     Context->ActiveActualLength);
+ 
+         USBSTOR_QueueTerminateRequest(PDODeviceExtension->LowerDeviceObject, Irp);
+         USBSTOR_QueueResetDevice(FDODeviceExtension);
+@@ -335,6 +367,7 @@
+     PSCSI_REQUEST_BLOCK Request;
+     PPDO_DEVICE_EXTENSION PDODeviceExtension;
+     PFDO_DEVICE_EXTENSION FDODeviceExtension;
++    PIRP_CONTEXT Context;
+     USBD_PIPE_HANDLE PipeHandle;
+     ULONG TransferFlags;
+     PMDL Mdl = NULL;
+@@ -343,11 +376,14 @@
+     DPRINT("USBSTOR_CBWCompletionRoutine Irp %p Ctx %p Status %x\n", Irp, Ctx, Irp->IoStatus.Status);
+ 
+     FDODeviceExtension = (PFDO_DEVICE_EXTENSION)Ctx;
++    Context = &FDODeviceExtension->CurrentIrpContext;
+     IoStack = IoGetCurrentIrpStackLocation(Irp);
+     Request = IoStack->Parameters.Scsi.Srb;
+     PDODeviceExtension = (PPDO_DEVICE_EXTENSION)IoStack->DeviceObject->DeviceExtension;
+ 
+-    if (!NT_SUCCESS(Irp->IoStatus.Status))
++    if (!USBSTOR_XhciCbwComplete(Irp->IoStatus.Status,
++                                  Context->Urb.UrbHeader.Status,
++                                  Context->Urb.UrbBulkOrInterruptTransfer.TransferBufferLength))
+     {
+         goto ResetRecovery;
+     }
+@@ -433,6 +469,9 @@
+     Irp->IoStatus.Information = 0;
+     Irp->IoStatus.Status = STATUS_IO_DEVICE_ERROR;
+     Request->SrbStatus = SRB_STATUS_BUS_RESET;
++    USBSTOR_XhciInterruptedResult(Irp, Request,
++                                 Context->ActiveExpectedLength,
++                                 Context->ActiveActualLength);
+ 
+     USBSTOR_QueueTerminateRequest(PDODeviceExtension->LowerDeviceObject, Irp);
+     USBSTOR_QueueResetDevice(FDODeviceExtension);
+@@ -487,6 +526,13 @@
+     // initialize rest of context
+     Context->Irp = Irp;
+     Context->StallRetryCount = 0;
++    Context->ExpectedTransferLength = Request->DataTransferLength;
++    Context->ActualTransferLength = 0;
++    if (Request == FDODeviceExtension->ActiveSrb)
++    {
++        Context->ActiveExpectedLength = Request->DataTransferLength;
++        Context->ActiveActualLength = 0;
++    }
+ 
+     return USBSTOR_IssueBulkOrInterruptRequest(
+         FDODeviceExtension,
+--- a/drivers/usb/usbstor/queue.c
++++ b/drivers/usb/usbstor/queue.c
+@@ -38,7 +38,7 @@
+     // this IRP isn't in our list here
+     // now release the cancel lock
+     IoReleaseCancelSpinLock(Irp->CancelIrql);
+-    Irp->IoStatus.Status = STATUS_CANCELLED;
++    USBSTOR_XhciUnsubmittedCancel(Irp);
+ 
+     USBSTOR_QueueTerminateRequest(DeviceObject, Irp);
+     IoCompleteRequest(Irp, IO_NO_INCREMENT);
+@@ -63,7 +63,7 @@
+     KeReleaseSpinLockFromDpcLevel(&FDODeviceExtension->IrpListLock);
+ 
+     IoReleaseCancelSpinLock(Irp->CancelIrql);
+-    Irp->IoStatus.Status = STATUS_CANCELLED;
++    USBSTOR_XhciUnsubmittedCancel(Irp);
+ 
+     USBSTOR_QueueTerminateRequest(DeviceObject, Irp);
+     IoCompleteRequest(Irp, IO_NO_INCREMENT);
+@@ -322,7 +322,7 @@
+     {
+         IoReleaseCancelSpinLock(OldLevel);
+ 
+-        Irp->IoStatus.Status = STATUS_CANCELLED;
++        USBSTOR_XhciUnsubmittedCancel(Irp);
+         Irp->IoStatus.Information = 0;
+ 
+         USBSTOR_QueueTerminateRequest(DeviceObject, Irp);
+--- a/drivers/usb/usbstor/CMakeLists.txt
++++ b/drivers/usb/usbstor/CMakeLists.txt
+@@ -27,3 +27,16 @@
+ add_pch(usbstor usbstor.h "${PCH_SKIP_SOURCE}")
+ add_cd_file(TARGET usbstor DESTINATION reactos/system32/drivers NO_CAB FOR all)
+ add_driver_inf(usbstor usbstor.inf)
++
++# C++17 transport compatibility is opt-in and owned by the xHCI source package.
++if(XHCI_REACTOS_COMPAT_ROOT)
++    target_sources(usbstor PRIVATE
++        "${XHCI_REACTOS_COMPAT_ROOT}/compat/reactos/usbstor/transport.cpp"
++        "${XHCI_REACTOS_COMPAT_ROOT}/src/core/storage_result.cpp")
++    target_include_directories(usbstor PRIVATE
++        "${XHCI_REACTOS_COMPAT_ROOT}/compat/reactos/usbstor")
++    set_property(TARGET usbstor PROPERTY CXX_STANDARD 17)
++endif()
++if(NOT XHCI_REACTOS_COMPAT_ROOT)
++    message(FATAL_ERROR "Patched USBSTOR requires XHCI_REACTOS_COMPAT_ROOT")
++endif()

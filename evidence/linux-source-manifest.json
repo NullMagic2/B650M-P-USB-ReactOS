@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/torvalds/linux",
+  "tag": "v6.12",
+  "commit": "adc218676eef25575469234709c2d87185ca223a",
+  "files": {
+    "xhci.h": {
+      "upstream_path": "drivers/usb/host/xhci.h",
+      "sha256": "15df205b61c7ca4eb49899c1ba11a7301004c7f6e0a09f4442032f335322a0cf",
+      "git_blob": "f0fb696d56198618484102e38c7d970d4b22328a"
+    },
+    "xhci-ext-caps.h": {
+      "upstream_path": "drivers/usb/host/xhci-ext-caps.h",
+      "sha256": "fda6202346115b8af9559fd64b1e721f88503023b9667eaa0da68af33793581a",
+      "git_blob": "67ecf7320c6239c1a61882db5b9640d60587ccf3"
+    },
+    "xhci-pci.c": {
+      "upstream_path": "drivers/usb/host/xhci-pci.c",
+      "sha256": "39d3f4838d7e9170420d6ba5c5f61bfde0c55f292286c9211925d8bc23016b84",
+      "git_blob": "cb07cee9ed0c75de60777f438fcfd07bc7ded092"
+    }
+  }
+}

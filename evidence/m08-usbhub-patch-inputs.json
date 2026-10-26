@@ -1,0 +1,34 @@
+{
+  "source_root": "/home/x/Documents/Codex/2026-10-21/he/work/ros-build-release-i386-smp-private/src",
+  "files": [
+    {
+      "path": "sdk/include/psdk/usb200.h",
+      "upstream_sha256": "8f61a0a739a32306d5756e05a789d3348e02ab07282736337a1363b7f74c7e48"
+    },
+    {
+      "path": "drivers/usb/usbhub/usbhub.h",
+      "upstream_sha256": "7433fc7e47d1e0da8a5570bc834b9844cbcb8d24a4c0cddea201af1648c7638c"
+    },
+    {
+      "path": "drivers/usb/usbhub/usbhub.c",
+      "upstream_sha256": "b1b75f27a7d0bc0693c7686b8d5f8edbbb729439bf3b082482a186ae4086ece0"
+    },
+    {
+      "path": "drivers/usb/usbhub/pnp.c",
+      "upstream_sha256": "ba9868aae6539320ddf411262489eb919acb8fc1a9d42ff0ba94c254d17a43a7"
+    },
+    {
+      "path": "drivers/usb/usbhub/CMakeLists.txt",
+      "upstream_sha256": "efaf732bf91d1e8fcbd6b3f4c48e892c485a2ab8d9e6e1181bd45110d7c84fc5"
+    },
+    {
+      "path": "drivers/usb/usbhub/ioctl.c",
+      "upstream_sha256": "649bc2aded7e7a592a1d8513980773a9f44eb62e5792c437ebe5e13516e9d0f8"
+    },
+    {
+      "path": "drivers/usb/usbhub/power.c",
+      "upstream_sha256": "9b4f8dd0070ff0b4327bec390cd341f1d89919af74c3014729095dd329d4405c"
+    }
+  ],
+  "scope": "Native SS speed enum, hub descriptor and feature/change call sites. Runtime unexecuted."
+}

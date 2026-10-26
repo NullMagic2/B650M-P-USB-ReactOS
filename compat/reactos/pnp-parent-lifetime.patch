@@ -1,0 +1,67 @@
+--- a/ntoskrnl/io/pnpmgr/devnode.c
++++ b/ntoskrnl/io/pnpmgr/devnode.c
+@@ -11,6 +11,7 @@
+ /* INCLUDES ******************************************************************/
+ 
+ #include <ntoskrnl.h>
++#include <parent_lifetime.hpp>
+ #define NDEBUG
+ #include <debug.h>
+ 
+@@ -84,6 +85,10 @@
+     KIRQL oldIrql;
+ 
+     ASSERT(DeviceNode->Parent == NULL);
++    ASSERT(ParentNode->PhysicalDeviceObject);
++
++    /* A referenced child may outlive REMOVE while still linked to this node. */
++    PnpRetainParentLifetime(ParentNode->PhysicalDeviceObject);
+ 
+     KeAcquireSpinLock(&IopDeviceTreeLock, &oldIrql);
+     DeviceNode->Parent = ParentNode;
+@@ -328,6 +333,7 @@
+ {
+     KIRQL OldIrql;
+     PDEVICE_NODE PrevSibling = NULL;
++    PDEVICE_OBJECT ParentObject = NULL;
+ 
+     ASSERT(DeviceNode->PhysicalDeviceObject);
+     /* All children must be deleted before a parent is deleted */
+@@ -351,6 +357,7 @@
+     /* Unlink from parent if it exists */
+     if (DeviceNode->Parent)
+     {
++        ParentObject = DeviceNode->Parent->PhysicalDeviceObject;
+         if (DeviceNode->Parent->LastChild == DeviceNode)
+         {
+             DeviceNode->Parent->LastChild = PrevSibling;
+@@ -394,6 +401,9 @@
+     IoGetDevObjExtension(DeviceNode->PhysicalDeviceObject)->DeviceNode = NULL;
+     ExFreePoolWithTag(DeviceNode, TAG_IO_DEVNODE);
+ 
++    /* May delete the parent. Do not access the child or hold the tree lock. */
++    PnpReleaseParentLifetime(ParentObject);
++
+     return STATUS_SUCCESS;
+ }
+ 
+--- a/ntoskrnl/io/pnpmgr/plugplay.c
++++ b/ntoskrnl/io/pnpmgr/plugplay.c
+@@ -11,3 +11,4 @@
+ #include <ntoskrnl.h>
++#include <parent_lifetime.hpp>
+ #define NDEBUG
+ #include <debug.h>
+@@ -189,6 +190,12 @@
+ {
+     PIOP_FIND_DEVICE_INSTANCE_TRAVERSE_CONTEXT DeviceInstanceContext = Context;
+ 
++    /* Existing owners may retain removed PDOs without retaining their identity. */
++    if (!PnpInstanceMayMatch(DeviceNode->State))
++    {
++        return STATUS_SUCCESS;
++    }
++
+     if (RtlEqualUnicodeString(&DeviceNode->InstancePath,
+                               DeviceInstanceContext->InstancePath, TRUE))
+     {

@@ -1,0 +1,22 @@
+{
+  "release": "v0.1.0",
+  "prerelease": false,
+  "installer": "B650M-P-USB-ReactOS-Setup-i386.exe",
+  "bytes": 199647017,
+  "sha256": "c6aff46ad75a1665c96a32fbca121d6bbe514e42b4f7b1c646076deb57376a0f",
+  "controller_sha256": "830e7c4d537893e957fee8935c430d4ee95e8a9619adf8237bc1a3b0c2593fd2",
+  "complete_source_sha256": "ca075e7f72800ee9a70fb24e64d27994dd00af3b43f5034def785d1ae3133ce5",
+  "native_modules_unchanged": true,
+  "embedded_files_audited": 19,
+  "kernel_patch_included": false,
+  "scope": "ReactOS i386, exact reviewed baseline and motherboard PCI profiles; selected-controller read/write/flush/restart passed; physical unplug/reconnect qualification requires separate experimental PnP kernel patch; physical USB-root boot unqualified.",
+  "publication_checks": {
+    "host_compiler": "GNU C++ 15.2.0",
+    "host_test_suites_passed": 5,
+    "asan_ubsan": true,
+    "leak_sanitizer": false,
+    "leak_sanitizer_note": "Disabled for traced execution environment",
+    "installer_overlay": "19 files and exact HCD/source identities verified",
+    "native_binary_rebuilt": false
+  }
+}

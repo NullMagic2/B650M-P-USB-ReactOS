@@ -1,0 +1,15 @@
+{
+  "module": "xhci.compat.hidusb_cancel_inputs",
+  "created": "2026-10-25",
+  "source_root": "/home/x/Documents/Codex/2026-10-21/he/work/ros-build-release-i386-smp-private/src",
+  "files": [
+    {
+      "path": "drivers/hid/hidusb/hidusb.c",
+      "upstream_sha256": "8d3f229cadc2b7a7366e1c1bfd3af6399bd753f1695971172644e2b095133a5f"
+    },
+    {
+      "path": "drivers/hid/hidusb/hidusb.h",
+      "upstream_sha256": "2af7d5fbab9311ebdcfb32210a2b5cd6b89fd8d4de848536ab10380817373ac9"
+    }
+  ]
+}

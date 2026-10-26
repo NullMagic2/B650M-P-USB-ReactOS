@@ -1,0 +1,26 @@
+--- a/drivers/usb/usbstor/pdo.c
++++ b/drivers/usb/usbstor/pdo.c
+@@ -647,6 +647,11 @@
+            Status = STATUS_SUCCESS;
+            break;
+        }
++       case IRP_MN_DEVICE_USAGE_NOTIFICATION:
++       {
++           Status = USBSTOR_XhciUsage(DeviceExtension->LowerDeviceObject, Irp);
++           break;
++       }
+        case IRP_MN_SURPRISE_REMOVAL:
+        {
+            Status = STATUS_SUCCESS;
+--- a/drivers/usb/usbhub/pnp.c
++++ b/drivers/usb/usbhub/pnp.c
+@@ -2811,9 +2811,8 @@
+ 
+         case IRP_MN_DEVICE_USAGE_NOTIFICATION:
+             DPRINT_PNP("PDO IRP_MN_DEVICE_USAGE_NOTIFICATION\n");
+-            DbgBreakPoint();
+-            Status = Irp->IoStatus.Status;
++            Status = USBH_XhciUsage(PortExtension, Irp);
+             break;
+ 
+         case IRP_MN_SURPRISE_REMOVAL:

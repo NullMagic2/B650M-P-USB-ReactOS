@@ -1,0 +1,19 @@
+{
+  "source_root": "/home/x/Documents/Codex/2026-10-21/he/work/ros-build-release-i386-smp-private/src",
+  "license": "MS-PL; original Microsoft notices retained; separately linked class module",
+  "files": [
+    {
+      "path": "drivers/storage/class/disk/disk.c",
+      "upstream_sha256": "84c1e7469980734b154ca91936026296ce9ba1e518e5048ebdc22ab9e35f9a5a"
+    },
+    {
+      "path": "drivers/storage/class/disk/CMakeLists.txt",
+      "upstream_sha256": "382d57480766cc72a823309e3aac867dec27479b0d80492d540b36bfa7383db8"
+    },
+    {
+      "path": "drivers/storage/class/disk/license.txt",
+      "upstream_sha256": "07639618c7b94ab9953cc61715f6325877e1854dca611ed9b1bd54497cf5e93a"
+    }
+  ],
+  "scope": "Preserve actual SYNCHRONIZE CACHE and unlock errors through existing SHUTDOWN completion; no storage execution"
+}

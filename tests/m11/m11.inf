@@ -1,0 +1,41 @@
+; SPDX-License-Identifier: GPL-2.0-only
+; Module: xhci.validation.m11_inf
+; Purpose: Bind the isolated virtual-only qualification driver and logical hubs.
+; Created: 2026-10-25
+; Architecture: Test fixture only; production board identities stay unchanged.
+; M11 emulator-only fixture. Never distribute as the motherboard driver INF.
+[Version]
+Signature="$Windows NT$"
+Class=USB
+ClassGUID={36FC9E60-C465-11CF-8056-444553540000}
+Provider=%Provider%
+DriverVer=10/25/2026,0.1.0.0
+[Manufacturer]
+%Provider%=Models,NTx86
+[Models.NTx86]
+%Controller%=Controller,PCI\VEN_1B36&DEV_000D
+%Root2%=RootHub,USB\ROOT_HUB20
+%Root3%=RootHub,USB\ROOT_HUB30
+[Controller.NT]
+[Controller.NT.Services]
+AddService=xhci_m11,0x00000002,ControllerService
+[ControllerService]
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\xhci.sys
+LoadOrderGroup=Boot Bus Extender
+[RootHub.NT]
+[RootHub.NT.Services]
+AddService=usbhub,0x00000002,RootService
+[RootService]
+ServiceType=1
+StartType=0
+ErrorControl=1
+ServiceBinary=%12%\usbhub.sys
+LoadOrderGroup=Base
+[Strings]
+Provider="XHCI M11 disposable emulator fixture"
+Controller="QEMU xHCI (M11 virtual-only test build)"
+Root2="M11 USB2 root hub"
+Root3="M11 USB3 root hub"

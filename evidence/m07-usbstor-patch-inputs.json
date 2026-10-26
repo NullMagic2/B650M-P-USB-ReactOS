@@ -1,0 +1,22 @@
+{
+  "source_root": "/home/x/Documents/Codex/2026-10-21/he/work/ros-build-release-i386-smp-private/src",
+  "files": [
+    {
+      "path": "drivers/usb/usbstor/usbstor.h",
+      "upstream_sha256": "8bd52ad79012fa83955846fc069b115795eb218fee10bf3560d0310a6b280222"
+    },
+    {
+      "path": "drivers/usb/usbstor/scsi.c",
+      "upstream_sha256": "2733aed010b8590277e60f4095c72e6a805d3dcb3d382d38ada118b9cf88624d"
+    },
+    {
+      "path": "drivers/usb/usbstor/CMakeLists.txt",
+      "upstream_sha256": "457c0210e1fee48fc7b04034b99808788953a4e60c96ae0704d52bc2e12f1712"
+    },
+    {
+      "path": "drivers/usb/usbstor/queue.c",
+      "upstream_sha256": "554cb4fbd742b2d95e7f018d6dc5140d29c17eaa36ace18cdf44db801df4ff05"
+    }
+  ],
+  "scope": "Original USBSTOR class retained; C++ completion/progress/sense/cancellation hooks, no storage execution"
+}

@@ -1,0 +1,106 @@
+Module: lightning.guest_packages.schema
+Purpose: Define the shared package contract and its installation boundaries.
+Created: 2026-10-25
+Architecture: Rust resolves and snapshots packages; a native guest backend installs them.
+
+The catalog is data. No device IDs, firmware names or OS component filenames live
+in the shared manager, planner or guest installer. Approved providers supply those
+values. Network, display, storage and other PnP packages use the same mechanism.
+
+Catalog root: Binaries/share/qemu-lightning/guest-packages/catalog.json.
+Schema: {"schema":1,"packages":[...]}. Each package has an ID, label, version,
+os (reactos/windows), arch (i386/amd64), requires (IDs), required_versions
+(optional ID-to-exact-version pins), license, files, and drivers.
+A license is a source path and SHA256. Every file has source, SHA256,
+optional SystemRoot-relative destination, approved previous_sha256 values and
+optional reboot=true. An optional boot_service names a kernel boot service;
+the guest verifies its configured image, unchanged boot-time registry identity and
+unique actual loaded module. This is a generic postcondition, not a device rule. Files without destinations are carried as source/notices
+or INF-side payloads. A driver references a pinned INF source and exact PnP
+hardware_ids. PCI, USB, HID, ACPI, ROOT and SWD identities are supported.
+
+Sources are relative to the catalog directory. Paths must not escape it or
+traverse symlinks; copied bytes are checked against SHA256. Windows device names,
+unsafe paths, conflicting destinations, missing dependencies, mixed targets,
+cycles, incompatible pinned versions and oversized payloads fail preparation.
+The catalog is a trusted installation source: integrity hashes do not authenticate
+a provider. Install only a catalog and binaries supplied by the intended publisher.
+Firmware providers must include the applicable redistribution notice.
+
+Manager: Settings > Prepare guest drivers. Select roots; dependencies resolve
+first, the per-VM read-only CD is attached automatically on each subsequent start.
+This operates only on a stopped VM and preserves existing boot storage and network
+configuration. It never assigns host PCI devices or changes Linux driver bindings.
+Start the guest and run GuestPackageSetup.exe once as administrator. Autorun is
+provided but guest policy can require opening the CD explicitly. No hypervisor can
+silently bypass guest administrator consent. Clearing selection detaches this CD.
+
+Guest setup validates all payloads, native OS/architecture and existing baselines
+before writes. Already matching files are retained; unknown files are not replaced.
+Replaced files and verified payloads are preserved under the guest SystemRoot
+QemuLightning/GuestPackages recovery directory, keyed by the exact plan hash.
+Approved OS updates are queued for restart rather than replacing loaded files.
+RunOnce resumes from that persistent copy, without relying on the CD remaining.
+Boot drivers can load before Session Manager performs pending renames: a changed
+OS component requires two distinct boots (installed-byte observation, then load
+confirmation). An already matching core dependency requires one observed reboot.
+Retries are bounded. These journals inherit actual guest filesystem/registry
+permissions; ReactOS ACL stubs cannot enforce protection, so use a trusted guest.
+
+Driver INFs are staged after prerequisite boot checks. Present devices use native
+PnP installation and start-status verification; absent devices are explicitly
+reported as waiting, with the INF and source available for later PnP discovery.
+No synthetic device, link state or hardware qualification result is produced.
+
+Standalone setup: prepare-exe builds one offline executable from the identical
+verified snapshot. The native backend checks the entire embedded archive and each
+entry before using its plan. Extraction is bounded, rejects unsafe/duplicate paths,
+and removes its temporary files on exit. The complete executable is preserved in
+the recovery directory, so reboot resume needs no manager or removable media.
+Administrator consent, actual reboots and approved baseline checks still apply.
+
+Bundle format v1: little-endian entry count, then entries containing u32 name bytes,
+u64 file bytes, 32 raw SHA256 bytes, ASCII relative name and file content. The
+56-byte trailer is QLPKG001, u64 executable offset, u64 archive length, and the
+32-byte SHA256 of the archive. Maximum archive size is 1 GiB plus 1 MiB metadata,
+1024 entries, 512 MiB per file and 179 name bytes. Integrity is not publisher
+authentication; use a trusted installer. Overlay signing is not implemented.
+
+CLI: lightning-guest-packages list ROOT
+     lightning-guest-packages prepare ROOT SETUP_EXE OUTPUT_ISO PACKAGE_ID...
+     lightning-guest-packages prepare-exe ROOT SETUP_EXE OUTPUT_EXE PACKAGE_ID...
+The same library is called by the manager. The initial Win32 backend is C++17 to
+support NT5/ReactOS without modern Rust Windows runtime requirements. Host code
+is Rust. SHA256 is the device-independent implementation from RTL8125-ReactOS,
+with its origin preserved. Native i386 ReactOS execution is separately tested;
+Windows and AMD64 execution require their own validation.
+
+Transactional recovery extension (2026-10-25)
+Before mutation, the C++ backend saves exact original file hashes/backups, service
+hives and affected present-device class keys/INF/association. It refuses a provider
+INF that would downgrade an existing boot-start service to demand start. A bounded
+phase journal separates preparation, prerequisite reboots, binding and commit.
+Binding failure attempts restoration; uncertain stop or restoration failure keeps
+the originals for offline recovery. --rollback restores static service/class/binding
+state and queues original files, then observes two real boots before completion.
+This uses real RegLoadKey/RegEnum/RegSet/RegUnLoad APIs because the audited ReactOS
+NtRestoreKey is unimplemented. Service Enum remains PnP-owned. --remove disables
+and clears only saved present bindings; shared files/INFs/backups remain preserved.
+Present-device postconditions verify the actual installed INF bytes and fresh CM
+start status. Only an already started, matching-INF device's stale NOT_CONFIGURED
+problem may be passed to the genuine configuration manager for completion and
+reenumeration; the result is queried again. Other problem codes are never cleared.
+
+The backend --extract command exports the already verified complete snapshot,
+including corresponding source/notices, into a new directory chosen by the user.
+It requires neither an installation nor administrator privileges. Recovery removes
+newly introduced values/subkeys with bounded enumeration, while preserving service
+root Enum. Device associations stay disabled through both restored-byte boots;
+only then are original config flags/enabled state restored. Recovery checks each
+original service Start value; a previously demand/disabled service is preserved.
+
+Private saved-hive mounts use normal RegUnLoadKey first after all owned handles
+close. On this audited ReactOS baseline a retained KCB reference can return
+ACCESS_DENIED despite successful close/save; the shared helper then calls the
+implemented NtUnloadKey2 with REG_FORCE_UNLOAD for that newly created private
+mount only. Failed unloading keeps the working hive and remains a real failure.

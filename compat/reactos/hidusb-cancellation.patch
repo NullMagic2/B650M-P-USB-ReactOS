@@ -1,0 +1,25 @@
+--- a/drivers/hid/hidusb/hidusb.c
++++ b/drivers/hid/hidusb/hidusb.c
+@@ -9,6 +9,7 @@
+  */
+ 
+ #include "hidusb.h"
++#include <cancellation.hpp>
+ 
+ PUSBD_PIPE_INFORMATION
+ HidUsb_GetInputInterruptInterfaceHandle(
+@@ -448,12 +449,12 @@
+         //
+         // store result length
+         //
+-        Irp->IoStatus.Information = Urb->UrbBulkOrInterruptTransfer.TransferBufferLength;
++        Irp->IoStatus.Information = HidUsbXhciReadActual(Irp->IoStatus.Status, Urb->UrbHeader.Status, Urb->UrbBulkOrInterruptTransfer.TransferBufferLength);
+ 
+         //
+         // FIXME handle error
+         //
+-        ASSERT(Urb->UrbHeader.Status == USBD_STATUS_SUCCESS || Urb->UrbHeader.Status == USBD_STATUS_DEVICE_GONE);
++        ASSERT(HidUsbXhciReadCompleted(Irp->IoStatus.Status, Urb->UrbHeader.Status));
+ 
+         //
+         // free the urb

@@ -1,0 +1,371 @@
+--- a/sdk/include/psdk/usb200.h
++++ b/sdk/include/psdk/usb200.h
+@@ -35,13 +35,16 @@
+ 
+ typedef enum _USB_DEVICE_TYPE {
+   Usb11Device = 0,
+-  Usb20Device
++  Usb20Device,
++  Usb30Device
+ } USB_DEVICE_TYPE;
+ 
+ typedef enum _USB_DEVICE_SPEED {
+   UsbLowSpeed = 0,
+   UsbFullSpeed,
+-  UsbHighSpeed
++  UsbHighSpeed,
++  UsbSuperSpeed,
++  UsbSuperSpeedPlus
+ } USB_DEVICE_SPEED;
+ 
+ #define USB_PORT_STATUS_CONNECT                       0x0001
+--- a/drivers/usb/usbhub/usbhub.h
++++ b/drivers/usb/usbhub/usbhub.h
+@@ -22,6 +22,12 @@
+ #include <usbdlib.h>
+ #include <ks.h>
+ #include <drivers/usbport/usbmport.h>
++
++#include <superspeed.hpp>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
+ 
+ #define USB_HUB_TAG 'BUHU'
+ 
+@@ -79,6 +85,7 @@
+ #define USBHUB_PDO_FLAG_PORT_RESSETING    (1 << 19)
+ #define USBHUB_PDO_FLAG_IDLE_NOTIFICATION (1 << 22)
+ #define USBHUB_PDO_FLAG_PORT_HIGH_SPEED   (1 << 23)
++#define USBHUB_PDO_FLAG_PORT_SUPER_SPEED  (1u << 31)
+ #define USBHUB_PDO_FLAG_ENUMERATED        (1 << 26)
+ 
+ #define USBHUB_ENUM_FLAG_DEVICE_PRESENT   0x01
+@@ -154,6 +161,10 @@
+   ULONG HubFlags;
+   USB_BUS_INTERFACE_HUB_V5 BusInterface;
+   USB_BUS_INTERFACE_USBDI_V2 BusInterfaceUSBDI;
++  BOOLEAN XhciHubInterfaceOwned;
++  BOOLEAN XhciUsbdInterfaceOwned;
++  ULONG XhciPortDataCapacity;
++  DEVICE_POWER_STATE XhciPreviousPowerState;
+   DEVICE_POWER_STATE DeviceState[POWER_SYSTEM_MAXIMUM];
+   SYSTEM_POWER_STATE SystemWake;
+   DEVICE_POWER_STATE DeviceWake;
+@@ -659,4 +670,8 @@
+   IN PDRIVER_OBJECT DriverObject,
+   IN PUNICODE_STRING RegistryPath);
+ 
++#ifdef __cplusplus
++}
++#endif
++
+ #endif /* _USBHUB_H_ */
+--- a/drivers/usb/usbhub/usbhub.c
++++ b/drivers/usb/usbhub/usbhub.c
+@@ -385,6 +385,8 @@
+ 
+     DPRINT("USBH_Transact: ... \n");
+ 
++    USBH_XhciPortRequest(HubExtension, &Function, &Request, &RequestValue, &RequestIndex);
++
+     if (BufferLen)
+     {
+         Length = ALIGN_DOWN_BY(BufferLen + sizeof(ULONG), sizeof(ULONG));
+@@ -1059,6 +1061,11 @@
+ 
+     DPRINT("USBH_SyncGetHubDescriptor: ... \n");
+ 
++    if (USBH_XhciIsSuperHub(HubExtension))
++    {
++        return USBH_XhciGetSuperHubDescriptor(HubExtension);
++    }
++
+     ExtendedHubInfo = ExAllocatePoolWithTag(NonPagedPool,
+                                             sizeof(USB_EXTHUB_INFORMATION_0),
+                                             USB_HUB_TAG);
+@@ -1893,6 +1900,13 @@
+ 
+     ASSERT(Port > 0);
+     PortData = &HubExtension->PortData[Port - 1];
++
++    if (!NT_SUCCESS(USBH_XhciPortChanges(HubExtension, Port, PortStatus)))
++    {
++        HubExtension->PortData[Port - 1].ConnectionStatus = DeviceGeneralFailure;
++        IoInvalidateDeviceRelations(HubExtension->LowerPDO, BusRelations);
++        return;
++    }
+ 
+     PortStatusChange = PortStatus->PortChange.Usb20PortChange;
+ 
+@@ -2401,6 +2415,9 @@
+ 
+     if (!NT_SUCCESS(Status))
+     {
++        /* Original status IRP completed even when work allocation fails. */
++        HubExtension->HubFlags |= USBHUB_FDO_FLAG_DEVICE_FAILED;
++        KeSetEvent(&HubExtension->StatusChangeEvent, EVENT_INCREMENT, FALSE);
+         return STATUS_MORE_PROCESSING_REQUIRED;
+     }
+ 
+@@ -2492,7 +2509,7 @@
+     Urb->Hdr.UsbdDeviceHandle = NULL;
+ 
+     Urb->PipeHandle = HubExtension->PipeInfo.PipeHandle;
+-    Urb->TransferFlags = USBD_SHORT_TRANSFER_OK;
++    Urb->TransferFlags = USBD_TRANSFER_DIRECTION_IN | USBD_SHORT_TRANSFER_OK;
+     Urb->TransferBuffer = HubExtension->SCEBitmap;
+     Urb->TransferBufferLength = HubExtension->SCEBitmapLength;
+     Urb->TransferBufferMDL = NULL;
+@@ -4476,8 +4493,14 @@
+ 
+     SerialNumberBuffer = NULL;
+ 
+-    IsHsDevice = UsbPortStatus.Usb20PortStatus.HighSpeedDeviceAttached;
+-    IsLsDevice = UsbPortStatus.Usb20PortStatus.LowSpeedDeviceAttached;
++    IsHsDevice = !USBH_XhciIsSuperHub(HubExtension) &&
++                  UsbPortStatus.Usb20PortStatus.HighSpeedDeviceAttached;
++    IsLsDevice = !USBH_XhciIsSuperHub(HubExtension) &&
++                  UsbPortStatus.Usb20PortStatus.LowSpeedDeviceAttached;
++    if (USBH_XhciIsSuperHub(HubExtension))
++    {
++        PortExtension->PortPdoFlags |= USBHUB_PDO_FLAG_PORT_SUPER_SPEED;
++    }
+ 
+     if (IsLsDevice == 0)
+     {
+--- a/drivers/usb/usbhub/pnp.c
++++ b/drivers/usb/usbhub/pnp.c
+@@ -513,14 +513,16 @@
+     {
+         Status = USBH_AbortInterruptPipe(HubExtension);
+ 
+-        if (!NT_SUCCESS(Status) && IoCancelIrp(HubExtension->SCEIrp))
+-        {
+-            KeWaitForSingleObject(&HubExtension->StatusChangeEvent,
+-                                  Suspended,
+-                                  KernelMode,
+-                                  FALSE,
+-                                  NULL);
+-        }
++        if (!NT_SUCCESS(Status))
++        {
++            IoCancelIrp(HubExtension->SCEIrp);
++        }
++        /* Abort command completion is not the original status IRP's completion. */
++        KeWaitForSingleObject(&HubExtension->StatusChangeEvent,
++                              Suspended,
++                              KernelMode,
++                              FALSE,
++                              NULL);
+ 
+         IoFreeIrp(HubExtension->SCEIrp);
+ 
+@@ -638,6 +640,7 @@
+ 
+     HubExtension->SCEIrp = NULL;
+     HubExtension->SCEBitmap = NULL;
++    USBH_XhciReleaseInterfaces(HubExtension);
+ }
+ 
+ NTSTATUS
+@@ -656,6 +659,13 @@
+ 
+     DPRINT("USBH_StartHubFdoDevice: ... \n");
+ 
++    Status = USBH_XhciPrepareStart(HubExtension);
++    if (!NT_SUCCESS(Status))
++    {
++        USBH_CompleteIrp(Irp, Status);
++        return Status;
++    }
++
+     KeInitializeEvent(&HubExtension->IdleEvent, NotificationEvent, FALSE);
+     KeInitializeEvent(&HubExtension->ResetEvent, NotificationEvent, TRUE);
+     KeInitializeEvent(&HubExtension->PendingRequestEvent, NotificationEvent, FALSE);
+@@ -757,6 +767,8 @@
+         goto ErrorExit;
+     }
+ 
++    HubExtension->XhciHubInterfaceOwned = TRUE;
++
+     Status = USBHUB_GetBusInterfaceUSBDI(HubExtension->LowerDevice,
+                                          &HubExtension->BusInterfaceUSBDI);
+ 
+@@ -766,6 +778,8 @@
+                 Status);
+         goto ErrorExit;
+     }
++
++    HubExtension->XhciUsbdInterfaceOwned = TRUE;
+ 
+     DeviceHandle = USBH_SyncGetDeviceHandle(HubExtension->LowerDevice);
+ 
+@@ -850,7 +864,11 @@
+     IsBusPowered = USBH_HubIsBusPowered(HubExtension->Common.SelfDevice,
+                                         HubExtension->HubConfigDescriptor);
+ 
+-    if (IsBusPowered)
++    if (USBH_XhciIsSuperHub(HubExtension))
++    {
++        HubExtension->MaxPowerPerPort = IsBusPowered ? 150 : 900;
++    }
++    else if (IsBusPowered)
+     {
+         /* bus-powered hub is allowed a maximum of 100 mA only for each port */
+         HubExtension->MaxPowerPerPort = 100;
+@@ -878,6 +896,10 @@
+     {
+         Status = USBD_Initialize20Hub(HubExtension);
+     }
++    if (NT_SUCCESS(Status))
++    {
++        Status = USBH_XhciConfigureSuperHub(HubExtension, HubCount);
++    }
+ 
+     if (!NT_SUCCESS(Status))
+     {
+@@ -975,6 +997,8 @@
+         ExFreePoolWithTag(HubExtension->HubConfigDescriptor, USB_HUB_TAG);
+         HubExtension->HubConfigDescriptor = NULL;
+     }
++
++    USBH_XhciReleaseInterfaces(HubExtension);
+ 
+   Exit:
+ 
+@@ -1283,7 +1307,8 @@
+                 {
+                     PdoExtension = PortData->DeviceObject->DeviceExtension;
+ 
+-                    if (!(PdoExtension->PortPdoFlags & USBHUB_PDO_FLAG_PORT_LOW_SPEED) &&
++                    if (!(PdoExtension->PortPdoFlags & USBHUB_PDO_FLAG_PORT_SUPER_SPEED) &&
++                        !(PdoExtension->PortPdoFlags & USBHUB_PDO_FLAG_PORT_LOW_SPEED) &&
+                         !(PdoExtension->PortPdoFlags & USBHUB_PDO_FLAG_PORT_HIGH_SPEED) &&
+                         !(HubExtension->HubFlags & USBHUB_FDO_FLAG_USB20_HUB))
+                     {
+@@ -1453,9 +1478,7 @@
+ USBH_FdoStopDevice(IN PUSBHUB_FDO_EXTENSION HubExtension,
+                    IN PIRP Irp)
+ {
+-    DPRINT1("USBH_FdoStopDevice: UNIMPLEMENTED. FIXME\n");
+-    DbgBreakPoint();
+-    return STATUS_SUCCESS;
++    return USBH_XhciStopHub(HubExtension, Irp);
+ }
+ 
+ NTSTATUS
+@@ -1511,10 +1534,12 @@
+ 
+     DPRINT1("USBH_FdoRemoveDevice: call IoWMIRegistrationControl UNIMPLEMENTED. FIXME\n");
+ 
++    USBH_XhciReleaseInterfaces(HubExtension);
++
+     Status = USBH_PassIrp(HubExtension->LowerDevice, Irp);
+ 
+     IoDetachDevice(HubExtension->LowerDevice);
+-    IoDeleteDevice(HubExtension->Common.SelfDevice);
++    /* Final FDO deletion follows the dispatcher's semaphore/flag retirement. */
+ 
+     return Status;
+ }
+@@ -2585,6 +2610,10 @@
+     }
+ 
+     HubExtension->HubFlags &= ~USBHUB_FDO_FLAG_STATE_CHANGING;
++    if (Minor == IRP_MN_REMOVE_DEVICE)
++    {
++        IoDeleteDevice(HubExtension->Common.SelfDevice);
++    }
+ 
+     return Status;
+ }
+--- a/drivers/usb/usbhub/CMakeLists.txt
++++ b/drivers/usb/usbhub/CMakeLists.txt
+@@ -26,3 +26,14 @@
+ add_importlibs(usbhub ntoskrnl hal wmilib usbd)
+ add_pch(usbhub usbhub.h "${PCH_SKIP_SOURCE}")
+ add_cd_file(TARGET usbhub DESTINATION reactos/system32/drivers NO_CAB FOR all)
++
++if(NOT XHCI_REACTOS_COMPAT_ROOT)
++    message(FATAL_ERROR "Patched USBHUB requires XHCI_REACTOS_COMPAT_ROOT")
++endif()
++target_sources(usbhub PRIVATE
++    "${XHCI_REACTOS_COMPAT_ROOT}/compat/reactos/usbhub/superspeed.cpp"
++    "${XHCI_REACTOS_COMPAT_ROOT}/src/core/usb_policy.cpp")
++target_include_directories(usbhub PRIVATE
++    "${CMAKE_CURRENT_SOURCE_DIR}"
++    "${XHCI_REACTOS_COMPAT_ROOT}/compat/reactos/usbhub")
++set_property(TARGET usbhub PROPERTY CXX_STANDARD 17)
+--- a/drivers/usb/usbhub/ioctl.c
++++ b/drivers/usb/usbhub/ioctl.c
+@@ -147,7 +147,7 @@
+                     return STATUS_INVALID_PARAMETER;
+                 }
+ 
+-                MaxPower = 2 * ConfigDescriptor->MaxPower;
++                MaxPower = USBH_XhciMaxPower(HubExtension, ConfigDescriptor->MaxPower);
+                 PortExtension->MaxPower = MaxPower;
+ 
+                 if (HubExtension->MaxPowerPerPort < MaxPower)
+--- a/drivers/usb/usbhub/power.c
++++ b/drivers/usb/usbhub/power.c
+@@ -457,6 +457,7 @@
+     PowerState = IoStack->Parameters.Power.State;
+ 
+     Status = Irp->IoStatus.Status;
++    USBH_XhciCompletePower(HubExtension, Irp);
+     DPRINT("USBH_PowerIrpCompletion: Status - %lX\n", Status);
+ 
+     if (!NT_SUCCESS(Status))
+@@ -484,11 +485,8 @@
+ 
+         HubExtension->HubFlags &= ~USBHUB_FDO_FLAG_HIBERNATE_STATE;
+ 
+-        if (OldDeviceState == PowerDeviceD3)
+-        {
+-            DPRINT1("USBH_PowerIrpCompletion: PowerDeviceD3. FIXME\n");
+-            DbgBreakPoint();
+-        }
++        /* Successful lower D0 completion has restored its retained contexts. */
++        UNREFERENCED_PARAMETER(OldDeviceState);
+ 
+         if (!(HubExtension->HubFlags & USBHUB_FDO_FLAG_DEVICE_STOPPED) &&
+             HubExtension->HubFlags & USBHUB_FDO_FLAG_DO_ENUMERATION)
+@@ -619,6 +617,7 @@
+                     case PowerDeviceD0:
+                         if (!(HubExtension->HubFlags & USBHUB_FDO_FLAG_SET_D0_STATE))
+                         {
++                            USBH_XhciBeginPower(HubExtension);
+                             HubExtension->HubFlags &= ~(USBHUB_FDO_FLAG_NOT_D0_STATE |
+                                                         USBHUB_FDO_FLAG_DEVICE_STOPPING);
+ 
+@@ -646,6 +645,7 @@
+                     case PowerDeviceD1:
+                     case PowerDeviceD2:
+                     case PowerDeviceD3:
++                        USBH_XhciBeginPower(HubExtension);
+                         if (HubExtension->ResetRequestCount)
+                         {
+                             IoCancelIrp(HubExtension->ResetPortIrp);
+--- a/drivers/usb/usbhub/pnp.c
++++ b/drivers/usb/usbhub/pnp.c
+@@ -2280,6 +2280,7 @@
+     if (DeviceHandle)
+     {
+         ASSERT(HubExtension);
++        USBH_XhciFlushDevice(HubExtension, DeviceHandle);
+         Status = USBD_RemoveDeviceEx(HubExtension, DeviceHandle, 0);
+ 
+         if (HubExtension->PortData &&
+@@ -2331,9 +2332,6 @@
+ 
+             DPRINT1("USBH_PdoRemoveDevice: call IoWMIRegistrationControl UNIMPLEMENTED. FIXME\n");
+ 
+-            if (HubExtension)
+-                USBHUB_FlushAllTransfers(HubExtension);
+-
+             IoDeleteDevice(PortDevice);
+         }
+     }

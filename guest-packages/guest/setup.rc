@@ -1,0 +1,7 @@
+/* Module: lightning.guest_packages.resource
+ * Purpose: Request normal guest administrator elevation on systems with UAC.
+ * Created: 2026-10-25
+ * Architecture: Resource-only integration; the native backend performs setup.
+ */
+#include <windows.h>
+1 RT_MANIFEST "setup.manifest"

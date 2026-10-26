@@ -1,0 +1,4 @@
+/Binaries/
+/build/
+/CMakeUserPresets.json
+*.user

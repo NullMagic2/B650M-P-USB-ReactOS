@@ -1,0 +1,15 @@
+{
+  "module": "xhci.compat.boot_usage_inputs",
+  "created": "2026-10-25",
+  "source_root": "/home/x/Documents/Codex/2026-10-21/he/work/ros-build-release-i386-smp-private/src",
+  "files": [
+    {
+      "path": "drivers/usb/usbstor/pdo.c",
+      "upstream_sha256": "d736db15dce42ec2025961af8e4822dd5d087dd5fda1296d36ed9e9850f4bc48"
+    },
+    {
+      "path": "drivers/usb/usbhub/pnp.c",
+      "upstream_sha256": "ba9868aae6539320ddf411262489eb919acb8fc1a9d42ff0ba94c254d17a43a7"
+    }
+  ]
+}

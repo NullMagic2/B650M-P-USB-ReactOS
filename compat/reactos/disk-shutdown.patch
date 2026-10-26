@@ -1,0 +1,71 @@
+--- a/drivers/storage/class/disk/disk.c
++++ b/drivers/storage/class/disk/disk.c
+@@ -22,6 +22,7 @@
+ 
+ #define DEBUG_MAIN_SOURCE   1
+ #include "disk.h"
++#include <shutdown.hpp>
+ 
+ 
+ //
+@@ -1153,6 +1154,7 @@
+     PDISK_DATA diskData = (PDISK_DATA) commonExtension->DriverData;
+     PIO_STACK_LOCATION irpStack;
+     NTSTATUS status = STATUS_SUCCESS;
++    NTSTATUS ShutdownStatus = STATUS_SUCCESS;
+     ULONG srbSize;
+     PSCSI_REQUEST_BLOCK srb;
+     PSTORAGE_REQUEST_BLOCK srbEx = NULL;
+@@ -1301,7 +1303,8 @@
+         }
+ 
+         srb = ExAllocatePoolWithTag(NonPagedPoolNx,
+-                                    srbSize,
++                                    ALIGN_UP_BY(srbSize, sizeof(PVOID)) +
++                                        sizeof(DISK_XHCI_SHUTDOWN_CONTEXT),
+                                     DISK_TAG_SRB);
+         if (srb == NULL) {
+ 
+@@ -1415,6 +1418,8 @@
+                                              0,
+                                              TRUE);
+ 
++            ShutdownStatus = DiskXhciMergeShutdownStatus(ShutdownStatus, status);
++
+             TracePrint((TRACE_LEVEL_INFORMATION, TRACE_FLAG_GENERAL, "DiskShutdownFlush: Synchonize cache sent. Status = %lx\n", status));
+         }
+ 
+@@ -1468,6 +1473,8 @@
+                                              NULL,
+                                              0,
+                                              TRUE);
++
++            ShutdownStatus = DiskXhciMergeShutdownStatus(ShutdownStatus, status);
+ 
+             TracePrint((TRACE_LEVEL_INFORMATION, TRACE_FLAG_GENERAL, "DiskShutdownFlush: Unlock device request sent. Status = %lx\n", status));
+         }
+@@ -1500,7 +1507,9 @@
+         // Set up IoCompletion routine address.
+         //
+ 
+-        IoSetCompletionRoutine(Irp, ClassIoComplete, srb, TRUE, TRUE, TRUE);
++        IoSetCompletionRoutine(Irp, DiskXhciShutdownComplete,
++                               DiskXhciShutdownContext(srb, srbSize, ShutdownStatus),
++                               TRUE, TRUE, TRUE);
+ 
+         //
+         // Get next stack location and
+--- a/drivers/storage/class/disk/CMakeLists.txt
++++ b/drivers/storage/class/disk/CMakeLists.txt
+@@ -31,3 +31,11 @@
+ add_cd_file(TARGET disk DESTINATION reactos/system32/drivers NO_CAB FOR all)
+ add_registry_inf(disk_reg.inf)
+ add_driver_inf(disk disk.inf)
++
++# The shutdown hook shares disk.sys's original MS-PL terms and class ownership.
++if(NOT XHCI_REACTOS_COMPAT_ROOT)
++    message(FATAL_ERROR "Patched disk requires XHCI_REACTOS_COMPAT_ROOT")
++endif()
++target_sources(disk PRIVATE "${XHCI_REACTOS_COMPAT_ROOT}/compat/reactos/disk/shutdown.cpp")
++target_include_directories(disk PRIVATE "${XHCI_REACTOS_COMPAT_ROOT}/compat/reactos/disk")
++set_property(TARGET disk PROPERTY CXX_STANDARD 17)

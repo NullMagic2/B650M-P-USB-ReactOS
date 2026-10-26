@@ -1,0 +1,35 @@
+{
+  "captured_at": "2026-10-25T17:39:43.042934-03:00",
+  "module": "xhci.image.installed_os_provenance",
+  "installed_kernel": "xhci-reactos/Binaries/.build/m09-m10/template-tree/ReactOS/system32/ntoskrnl.exe",
+  "matching_existing_build_kernel": "/home/x/Documents/Codex/2026-10-21/he/work/ros-build-release-i386/ntoskrnl/ntoskrnl.exe",
+  "kernel_sha256": "2cbf353890304819960a5fb94752c42aa56dac700d809da3b0e571a1bcbaeedc",
+  "binary_version_strings": [
+    "20261021-unknown-revision",
+    "20261021-unknown-revision.GNU_13.0.0"
+  ],
+  "matching_build_source_directory": "/home/x/Documents/Codex/2026-10-21/he/work/reactos-release-source",
+  "build_configuration": {
+    "ARCH": "i386",
+    "CMAKE_BUILD_TYPE": "Debug",
+    "CMAKE_CXX_COMPILER": "/usr/bin/i686-w64-mingw32-g++",
+    "CMAKE_C_COMPILER": "/usr/bin/i686-w64-mingw32-gcc",
+    "DBG": "TRUE",
+    "KDBG": "TRUE",
+    "CMAKE_HOME_DIRECTORY": "/home/x/Documents/Codex/2026-10-21/he/work/reactos-release-source"
+  },
+  "configuration_sha256": "7bf0d3987ce824f1a9e230099cf15fa0d704d020098cf10f6702e8d758768574",
+  "current_generated_buildno_sha256": "8f7af0e1a242445146a2151716183e1c5b3209525db8b734f8710111a45e61dd",
+  "metadata_limit": "The existing generated buildno.h was regenerated after the kernel: it says20261022, while the actual binary says20261021. Preserve both facts; do not present the current generated header as its historical build header. Build cache and full source are supplied as corresponding build context, not a bit-for-bit reproducibility claim.",
+  "source_files_sha256": {
+    "CMakeLists.txt": "90db06fab3eece78f4a590ea0aebd8efdcbed5b025a75df54eef4e67f2b02fe8",
+    "COPYING": "5dd08524bb37f07b4a6f548439ffcd8ec0444bc0ae92e0fe929ea70185cdbc62",
+    "ntoskrnl/CMakeLists.txt": "8292a8c906cbfaef541f13b0870ac11830e9c6f440e33e979c465c3b4cfe1ea3",
+    "ntoskrnl/io/iomgr/iomgr.c": "ab20dbb18032608a9d8018c4718f56b6019738eabe205ea11b739e868db16dbf",
+    "ntoskrnl/io/iomgr/driver.c": "8c7639db809d55963d2d65f9bcb6f779649d0edf664e698878f5669e7f34279a",
+    "ntoskrnl/io/iomgr/arcname.c": "d64f4caf18a8986cae44f3ec822f04887e29bbc8e5a145e43815dac8141edb0a"
+  },
+  "source_family_reference": "Private side-by-side build instructions identify pristine822e8647792a2c43f033e3e00ed273d59f163c7b plus framebuffer/windowing patches; the exact installed kernel is identified by SHA256, not directory name.",
+  "sdk_source_is_distinct": "/home/x/Documents/Codex/2026-10-21/he/work/ros-build-release-i386-smp-private/src",
+  "host_or_vm_modified": false
+}

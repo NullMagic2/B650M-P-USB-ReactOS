@@ -1,0 +1,26 @@
+{
+  "module": "xhci.host.fatfs_inputs",
+  "created": "2026-10-25",
+  "files": [
+    {
+      "path": "sdk/tools/fatten/fatfs/ff.c",
+      "upstream_sha256": "02cf6c0743b9f1c14c7a8f64b1b210f9a6e6a3bdf064af045ad4434176569ae8"
+    },
+    {
+      "path": "sdk/tools/fatten/fatfs/ff.h",
+      "upstream_sha256": "ba017024df9a43bcd142ca1709b6db003d65dfd0243b84aac6b60ebd6b605ce7"
+    },
+    {
+      "path": "sdk/tools/fatten/fatfs/ffconf.h",
+      "upstream_sha256": "e027141ecaadbfad5a1eed305dd2233d931f872485247b710818fb9c026fef60"
+    },
+    {
+      "path": "sdk/tools/fatten/fatfs/diskio.h",
+      "upstream_sha256": "e32be2fb401fe2b6db63c9d89675ceb5135c9ad753b5493f3a66858b622a0ba7"
+    },
+    {
+      "path": "sdk/tools/fatten/fatfs/option/ccsbcs.c",
+      "upstream_sha256": "7471de753f25d83117f8495d2a79cad6b97975aefc719bcbf2dece0aca10bbf2"
+    }
+  ]
+}

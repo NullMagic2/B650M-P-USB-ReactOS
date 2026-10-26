@@ -1,0 +1,38 @@
+USB Controllers (B650M-P) – ReactOS
+
+Install
+  Download the single EXE from the GitHub release and run it in the matching
+  ReactOS i386 guest. Follow all required restarts. See packaging/INSTALL.txt
+  for extraction, installation, resume and rollback options.
+
+Host build
+  cmake -S . -B Binaries/.build/host -DXHCI_SANITIZERS=ON \
+    -DXHCI_SHARED_PACKAGES="$PWD/guest-packages"
+  cmake --build Binaries/.build/host -j4
+  ctest --test-dir Binaries/.build/host --output-on-failure
+  Binaries/.build/host/xhci_inventory
+  Inventory reads identity only and never changes Linux controller bindings.
+  If LeakSanitizer is unavailable under tracing, set ASAN_OPTIONS=detect_leaks=0;
+  that limitation is separate from ASan and UBSan qualification.
+
+Native build
+  Extract the release EXE with --extract to obtain source/complete-source.tar.gz.
+  This archive includes exact ReactOS SDK and installed-baseline source snapshots,
+  build configuration, driver source and the shared package engine. Preserve the
+  separate GPL/MS-PL notices. The release controller source matches src/ here;
+  compat/reactos/pnp* adds the separately tested experimental kernel patch.
+
+  Configure with XHCI_REACTOS_SOURCE and XHCI_REACTOS_BUILD pointing to a matching
+  i386 ReactOS source/build SDK, and XHCI_SHARED_PACKAGES pointing to guest-packages.
+  XHCI_NATIVE_CONTROLLER=ON enables xhci_native_controller.
+  XHCI_NATIVE_USB_COMPATIBILITY=ON enables xhci_native_usb_compatibility.
+  XHCI_NATIVE_BOOT=ON enables the boot bridge.
+  XHCI_BUILD_PACKAGE_BACKEND=ON enables the shared GUI installer backend.
+  See cmake/m09_m10.cmake for the provider catalog/standalone packaging inputs.
+  GCC13/MinGW i386 compilation is verified; an MSVC build is not verified.
+
+Scope
+  These drivers target the exact reviewed MSI PRO B650M-P PCI profiles and a
+  matching ReactOS i386 build. The installer rejects unknown baseline files.
+  The installer does not install the experimental PnP kernel patch needed for
+  the physical unplug/reconnect result. Physical USB-root boot is unqualified.

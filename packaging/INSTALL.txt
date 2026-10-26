@@ -1,0 +1,95 @@
+Module: xhci.package.install
+Purpose: Explain the single native setup, matching payloads and preserved recovery state.
+Created: 2026-10-25
+Architecture: The shared Qemu-Lightning NT5 engine owns installation and recovery.
+
+Run XHCI-ReactOS-Setup-i386.exe inside the matching native ReactOS i386 system.
+This one offline executable carries the operational HCD, exact five board PCI
+profiles, USB2/USB3 root INFs, genuine patched USBHUB/USBSTOR/disk/HIDUSB modules,
+complete corresponding source and separate GPL/MS-PL/compiler notices. No manager,
+separate prerequisite download or diagnostic module is required.
+
+The original baseline hashes are explicit. Unknown system files and unreviewed
+upgrades are refused. Three boot-start class modules retain their actual service,
+image and loaded-module checks. The HIDUSB compatibility update preserves real
+cancelled interrupt URBs; it does not change their NT or USBD error into success.
+The controller INF binds only reviewed AMD subsystem/revision identities.
+Its canonical service is xhci, matching xhci.sys: the genuine ReactOS boot driver
+initializer derives the service key from the loaded module basename. The
+read-only diagnostic SYS is never a controller-installation payload.
+
+Setup snapshots original installed files, service hives, device class keys,
+previous INF and persistent association before queuing system changes. OS files
+are queued for restart; loaded files are not overwritten in place. Two observed
+boots separate installed-byte observation from actual cold loading. Resume uses
+the preserved executable and payloads under SystemRoot\QemuLightning\GuestPackages;
+the original USB/CD/package may be removed. Restart retries are bounded to three.
+Present devices require the real installed-INF hash and fresh PnP start status.
+Absent devices are reported as waiting; setup does not fabricate a controller.
+
+Use the same preserved executable with:
+  --extract    export verified payloads/complete source to a new chosen directory
+  --check      verify the plan without installing or changing configuration
+  --install    install without the opening confirmation; exit3010 needs restart
+  --resume     bounded automatic persistent resume
+  --rollback   restore original service/class/binding state and queue original files
+  --remove     stop and clear only this plan's present device associations
+
+Rollback uses actual RegLoadKey/registry-copy/RegUnLoadKey because this ReactOS
+kernel's NtRestoreKey is a stub. It preserves PnP-owned service Enum state.
+It observes restored bytes and a second boot before reporting original boot
+dependencies loaded. Device bindings remain disabled until those checks pass;
+then original configuration flags and enabled state are restored. Service Start
+values are restored and checked, including demand/disabled original services. Removal retains shared files, staged INFs and backups.
+Uncertain hardware retirement or a platform API failure preserves recovery data
+and reports failure. Recover a stopped image offline if the OS cannot stop it.
+
+An existing boot-start controller is never downgraded to demand start by this
+package. The active persistent USB controller refuses stop/remove/idle D3 through
+its real usage path. Upgrade that image only while stopped, using image_update.cmake
+or the checked --replace-in-copy tool on a new copy; retain the original image.
+The original image is the rollback for an offline boot-controller update.
+Catalog image updates replace only their five runtime modules. A boot bridge,
+loader or registry boot-policy change requires assembling a full new image.
+
+ReactOS permissions are not a protected recovery boundary on this baseline.
+Use a trusted guest and publisher. Hashes identify bytes, not the publisher.
+Successful installation, source completion and emulator operation do not qualify
+physical AMD-controller operation, motherboard interrupt routing or USB durability.
+
+Source rebuild
+  complete-source.tar.gz contains source/xhci-reactos, source/guest-packages and
+  the exact genuine source/reactos snapshot used for the SDK/class rebuild.
+  source/reactos-installed-baseline and installed-baseline-build contain the
+  separately identified installed OS source/configuration; its Debug kernel is
+  not mislabeled as the newer SDK Release kernel.
+  Build that matching i386 ReactOS SDK, then configure xhci-reactos with its source
+  and build paths plus XHCI_SHARED_PACKAGES pointing to source/guest-packages.
+  XHCI_NATIVE_CONTROLLER, XHCI_NATIVE_BOOT and XHCI_NATIVE_USB_COMPATIBILITY build
+  real native modules. XHCI_BUILD_PACKAGE_BACKEND builds the shared i386 GUI.
+  xhci_package_provider produces the pinned provider catalog; xhci_standalone
+  calls the unchanged shared host planner with that catalog and matching backend.
+  GCC/MinGW verification is separate from the unperformed MSVC build.
+
+Persistent image preparation
+  Build xhci_boot_hive (BootHive-i386.exe) alongside the package backend. In an
+  isolated native staging guest run it against an immutable copy of the complete
+  installed SYSTEM and the provider-generated boot.inf, selecting a NEW output
+  hive. It loads only an exclusive working copy, applies policy beneath the real
+  Select.Default ControlSetNNN, saves the complete hive and an identity sidecar, then
+  unloads. It never follows CurrentControlSet into the running SYSTEM. After handles close,
+  normal unloading is tried first; genuine NtUnloadKey2 force unloading can retire
+  retained references only in its newly created private mount. Failure preserves
+  the working hive. Export the
+  new hive and sidecar to image assembly as XHCI_SYSTEM_HIVE. Assembly verifies
+  original/policy/output hashes before using it. A fresh hivesys.inf-only hive is
+  insufficient because installed device-class/filter/service state would be lost.
+  XHCI_BASELINE_SOURCE/BUILD and XHCI_REACTOS_SOURCE/BUILD identify the separately
+  preserved installed OS and new-module SDK sources/configuration for archiving.
+
+  Image assembly also preserves the genuine All Users/Default User shell folder
+  trees and valid Default User ntuser.dat. The existing Administrator SAM/profile
+  identity receives the separately consistent native saved XHCI_USER_HIVE. A
+  system DEFAULT hive is not substituted for a normal user profile. Explicit
+  stale shortcuts for excluded third-party applications are removed only from
+  new staging; unrelated application/user data is not copied into the image.

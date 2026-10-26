@@ -1,0 +1,18 @@
+Module: xhci.package.diagnostic
+Purpose: Distinguish the read-only NT diagnostic from future operational packages.
+Created: 2026-10-25
+Architecture: DriverEntry reads PCI config and returns STATUS_NOT_SUPPORTED.
+
+xhci-diagnostic-i386.sys is not an installable USB HCD. It creates no devices,
+maps no MMIO, allocates no DMA buffers, connects no interrupt, enumerates no root
+hub, handles no URB and changes no PCI configuration. There is intentionally no
+controller-binding INF. Do not replace a USB driver with this diagnostic.
+
+Only compile/link and host model evidence currently exist. Loading the diagnostic
+in a guest has not been validated. A failed service start with NOT_SUPPORTED is
+its explicit disposition, never evidence that USB hardware was initialized.
+
+Operational packaging will be separate and require complete PnP/resource and
+transfer ownership, exact reviewed PCI IDs, rollback/recovery, boot-driver
+ordering and actual disk persistence validation. It must not automatically take
+the controller carrying the host's input devices or storage away from Linux.
