@@ -68,6 +68,11 @@ using PortNotify = void (*)(void *context, ULONG port) noexcept;
 // it does not join an already captured callback; retain its context until native
 // quiescence has joined all event DPCs before releasing the bus owner.
 void runtime_set_port_notify(Runtime *, PortNotify, void *context) noexcept;
+// Display-only counters; valid until runtime_destroy.
+struct RuntimeCounters;
+RuntimeCounters *runtime_counters(Runtime *) noexcept;
+// PASSIVE_LEVEL with the mapping live. Display-only register and ring sample.
+ULONG runtime_start_state(Runtime *, ULONG state[8], ULONG expiry[4]) noexcept;
 NTSTATUS runtime_port(Runtime *, UCHAR port, ULONG &value, ULONG set_bits = 0,
                        ULONG clear_changes = 0, ULONG clear_bits = 0) noexcept;
 } // namespace xhci::native

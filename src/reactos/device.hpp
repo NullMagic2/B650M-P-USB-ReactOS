@@ -45,9 +45,18 @@ struct Device {
     PIRP power_irp{};
     USHORT original_command{};
     bool bus_referenced{}, changed_bus_master{}, shutdown_registered{}, hardware_gone{};
+    // Upstream bridge path as found at start; see BootTrace.
+    ULONG bridges{}, repaired{}, bridge[4]{}, bridge_slot[4]{}, iommu{MAXULONG}, iommu_after{MAXULONG};
+    ULONG silenced{}, silenced_device[4]{};
 };
 // All resource lifecycle calls run at PASSIVE_LEVEL under lifecycle_mutex.
 NTSTATUS start_device(Device &, PCM_RESOURCE_LIST raw, PCM_RESOURCE_LIST translated) noexcept;
+// PASSIVE_LEVEL. Count device attachments and start requests for the boot
+// bridge's failure report; lower is the bus driver's own start status.
+void record_attach() noexcept;
+void record_start_request(NTSTATUS lower) noexcept;
+// At most APC_LEVEL; lock-free ring write.
+void record_enumeration(ULONG where, NTSTATUS status, ULONG ids) noexcept;
 bool stop_device(Device &, bool surprise) noexcept;
 NTSTATUS change_power(Device &, DEVICE_POWER_STATE) noexcept;
 // PASSIVE_LEVEL. Preserve lower PCI-stack usage accounting before local pinning.

@@ -1,0 +1,86 @@
+Physical USB-root boot, MSI PRO B650M-P (MS-7E27), 2026-11-13 to 2026-11-14
+
+Setup
+  ReactOS i386 on a SanDisk USB stick (MBR, FAT32), started through the board's
+  legacy (CSM) boot entry. About 127 GiB RAM, Radeon RX 7900 XTX, internal NVMe
+  and SATA disks present. Each boot result was read from a photograph of the
+  screen; no serial or kernel debugger was attached. Emulator checks used QEMU/KVM
+  with the fixture options named below, which are never built into delivered
+  modules.
+
+Sequence of observed failures and the change that removed each one
+
+  1. FreeLoader: every BIOS disk read after startup timed out (INT 13h AH=80).
+     Cause: free memory above 4 GiB sized the loader page table at 267 MiB and
+     placed it at 0x6849d800-0x7838f000, over firmware memory.
+     Change: compat/reactos/freeldr/bios_disk_buffer.cpp bounds loader free
+     memory to the first GiB. Result on board: kernel loads.
+     Firmware dependence on the overwritten area is inferred, not measured.
+
+  2. STOP 0x7B (C000000E): no USB disk appeared.
+     The boot bridge then reported 1022:43F7 failing its first command.
+     Changes: timer servicing of the event ring when the line never signals,
+     ownership after an unanswered 5 s BIOS handoff, per-start records in
+     HKLM\SYSTEM\CurrentControlSet\Control\XhciBootTrace, on-screen report.
+
+  3. Report showed iommu=00001405 and no events on any controller.
+     Cause: CSM leaves the AMD IOMMU translating; controller DMA faulted.
+     Change: src/reactos/resources.cpp release_iommu(). Bridges were checked
+     and needed no repair. Result on board: controllers start.
+
+  4. STOP 0xCA (duplicate PDO).
+     Cause: each root-hub PDO claimed a globally unique instance ID.
+     Change: src/reactos/usb_bus.cpp, UniqueID = FALSE.
+
+  5. Ports on 1022:43F7 not enumerated; controller later halted itself.
+     Causes: no USB2 speed before port reset, change bits the hub class cannot
+     acknowledge, and Stopped transfer events without an active TD.
+     Changes: src/reactos/root_hub.cpp, interrupts.cpp, transfers.cpp.
+     Result on board: webcam, keyboard, MYSTIC LIGHT and both storage devices
+     enumerated.
+
+  6. STOP 0x7E (80000003): a failed kernel ASSERT, text not visible.
+     /DEBUGPORT=SCREEN stalled the boot on this board and was abandoned.
+     Change: the boot bridge redirects RtlAssert to an on-screen report
+     (fixture XHCI_TEST_ASSERTION). The report named
+     sdk/lib/drivers/hidparser/context.c line 137.
+     Cause: MYSTIC LIGHT (0db0:0076) declares 4541 report fields; the parser's
+     16-bit PreparsedDataLength truncates and the context overruns.
+     Change: compat/reactos/hidusb/report_limit.cpp refuses such descriptors
+     in HIDUSB (host test tests/hid_report_limit_tests.cpp uses the board's
+     254-byte descriptor). The device stays enumerated on USB.
+
+  7. Report "USB root disk not found: c0000010" with the stick matched.
+     Cause: the removable stick rejects the paging-path medium lock.
+     Change: src/reactos/boot.cpp resends the usage notification to the base
+     device (fixture XHCI_TEST_CLASS_LOCK_REFUSED).
+     Result on board, 2026-11-14: ReactOS desktop reached.
+
+Observed on that desktop
+  New Hardware prompts for devices ReactOS has no driver for (NVMe controller,
+  AMD platform devices). Explorer windows failed with an ATL assertion because
+  an internal disk had taken C: and the USB system volume another letter.
+  Change: the boot bridge creates the system volume's C: mount point through
+  the mount manager. Checked in the emulator with a second fixed disk.
+  NOT yet checked on the board.
+
+Not established
+  - Board confirmation of the C: assignment.
+  - Interrupt-driven operation of 1022:43F7; its counters (poll=228,
+    unclaimed=8918 in one report) suggest timer polling on shared IRQ 5.
+  - Storage write durability, unplug/reconnect and restart from the board's
+    own USB-root session.
+  - More than 1 GiB of RAM under ReactOS.
+  - MYSTIC LIGHT lighting control.
+  - A FreeLoader rebuild from the pinned dependency bundle alone;
+    cmake/boot_loader_repair.cmake needs a saved loader SDK and build recipe.
+  - Keyboard 2a7a:959f was sometimes absent in Linux after a ReactOS attempt
+    until replugged. The cause is not identified.
+
+Checks run for this change set
+  Host: seven ASan/UBSan suites (ctest), LeakSanitizer disabled.
+  Native: xhci_native_controller, xhci_native_boot and
+  xhci_native_usb_compatibility build with i686-w64-mingw32 GCC 13.
+  Emulator: default, no-interrupt, first-start-reset, interrupt-flood,
+  assertion, class-lock-refused and HID-limit fixtures boot to the desktop or
+  to their expected report.

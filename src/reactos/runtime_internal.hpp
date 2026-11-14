@@ -8,6 +8,7 @@ Architecture: Shared privately by DMA, controller and interrupt implementations.
 #pragma once
 #include "runtime.hpp"
 #include "runtime_power.hpp"
+#include "boot_trace.hpp"
 namespace xhci::native {
 inline constexpr ULONG runtime_tag = 'RxhX';
 inline constexpr ULONG maximum_slots = 255;
@@ -78,9 +79,43 @@ struct Runtime {
     ULONG generation{1};
     bool programmed{}, running{}, stopped{true}, quarantined{};
     ULONG unexpected_events{}, port_changes[8]{};
+    // counters.polling: the assigned interrupt line never delivered events, so
+    // the timer services the event ring and the interrupter stays masked.
+    RuntimeCounters counters{};
+    LONG timer_batches{};
+    // Unclaimed-interrupt flood detection; see timeout_dpc.
+    LONG flood_baseline{}, flood_claimed{};
+    volatile LONG flood_relief{};
+    ULONG start_step{};
+    ULONG expiry[4]{};
+    Trb last_event{};
+    LONG expiry_taken{};
     PortNotify port_notify{};
     void *port_context{};
 };
+// Any IRQL. Declares the controller faulted and keeps the first cause.
+inline void raise_fault(Runtime &runtime, ULONG site) noexcept {
+    if (!InterlockedCompareExchange(&runtime.counters.fault_site, static_cast<LONG>(site), 0)) {
+        runtime.counters.fault_event[0] = runtime.last_event.parameter_low;
+        runtime.counters.fault_event[1] = runtime.last_event.parameter_high;
+        runtime.counters.fault_event[2] = runtime.last_event.status;
+        runtime.counters.fault_event[3] = runtime.last_event.control;
+        runtime.counters.fault_status = MAXULONG;
+        if (!runtime.gone) {
+            runtime.registers.read32(runtime.caps.operational_offset + 4,
+                                     runtime.counters.fault_status);
+        }
+    }
+    InterlockedExchange(&runtime.fault, 1);
+}
+// Runtime lock held. An event that needs no action and proves no failure.
+inline void note_stray(Runtime &runtime, const Trb &event) noexcept {
+    InterlockedIncrement(&runtime.counters.stray);
+    runtime.counters.stray_event[0] = event.parameter_low;
+    runtime.counters.stray_event[1] = event.parameter_high;
+    runtime.counters.stray_event[2] = event.status;
+    runtime.counters.stray_event[3] = event.control;
+}
 NTSTATUS dma_allocate(Runtime &runtime, DmaBuffer &buffer, ULONG bytes, ULONG alignment,
                       ULONG boundary = 0) noexcept;
 void dma_free(Runtime &runtime, DmaBuffer &buffer) noexcept;

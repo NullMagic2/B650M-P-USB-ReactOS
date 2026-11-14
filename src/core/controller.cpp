@@ -14,6 +14,10 @@ constexpr BoardController controllers[] = {
     {{0x1022, 0x15ba, 0x1462, 0x7e27, 0x00}, "AMD Phoenix xHCI B"},
     {{0x1022, 0x15c0, 0x1022, 0x15c0, 0x00}, "AMD Phoenix xHCI C"},
     {{0x1022, 0x15c1, 0x1022, 0x15c1, 0x00}, "AMD Phoenix xHCI D"},
+#ifdef XHCI_VIRTUAL_TEST_CONTROLLER
+    // Emulator fixture only; never defined for delivered modules.
+    {{0x1b36, 0x000d, 0x1af4, 0x1100, 0x01}, "QEMU xHCI (test build)"},
+#endif
 };
 constexpr std::uint32_t hcsparams1_offset = 0x04, hcsparams2_offset = 0x08;
 constexpr std::uint32_t hccparams1_offset = 0x10, dboff_offset = 0x14, rtsoff_offset = 0x18;

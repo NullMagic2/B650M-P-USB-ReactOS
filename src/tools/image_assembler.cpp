@@ -59,6 +59,23 @@ void put32(unsigned char *p, std::uint32_t value) {
         p[i] = static_cast<unsigned char>(value >> (i * 8));
     }
 }
+// The DOS MBR uses these addresses when INT 13 extensions are unavailable.
+// Saturation is valid only for LBAs outside the BIOS CHS address range.
+bool partition_chs(unsigned char *p, std::uint64_t lba, unsigned heads, unsigned sectors) {
+    if (!heads || heads > 255 || !sectors || sectors > 63) {
+        return false;
+    }
+    const auto cylinder = lba / (heads * sectors);
+    if (cylinder > 1023) {
+        p[0] = 0xfe;
+        p[1] = p[2] = 0xff;
+        return true;
+    }
+    p[0] = static_cast<unsigned char>((lba / sectors) % heads);
+    p[1] = static_cast<unsigned char>((lba % sectors + 1) | ((cylinder >> 2) & 0xc0));
+    p[2] = static_cast<unsigned char>(cylinder);
+    return true;
+}
 bool read_exact(const fs::path &path, unsigned char *bytes, std::size_t count) {
     std::error_code error;
     if (!fs::is_regular_file(path, error) || fs::is_symlink(path, error) ||
@@ -193,11 +210,13 @@ bool boot(const fs::path &mbr_path, const fs::path &vbr_path, std::uint32_t sign
     put32(mbr.data() + 440, signature);
     auto *partition = mbr.data() + 446;
     partition[0] = 0x80;
-    partition[1] = 0xfe;
-    partition[2] = partition[3] = 0xff;
     partition[4] = 0x0c;
-    partition[5] = 0xfe;
-    partition[6] = partition[7] = 0xff;
+    const auto sectors = le16(loader.data() + 24);
+    const auto heads = le16(loader.data() + 26);
+    if (!partition_chs(partition + 1, start_sector, heads, sectors) ||
+        !partition_chs(partition + 5, start_sector + image.sectors - 1, heads, sectors)) {
+        return false;
+    }
     put32(partition + 8, static_cast<std::uint32_t>(start_sector));
     put32(partition + 12, image.sectors);
     return io(true, 0, mbr.data(), mbr.size()) && fsync(image.fd) == 0;

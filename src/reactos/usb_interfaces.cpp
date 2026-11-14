@@ -64,6 +64,9 @@ NTSTATUS NTAPI create_device(PVOID context, PUSB_DEVICE_HANDLE *handle,
     auto *parent = usb_find_device(*root.bus, parent_handle, &root);
     UsbDevice *created{};
     const auto status = usb_create_device(*root.bus, parent, port_status_value, port, created);
+    record_enumeration((static_cast<ULONG>(root.bus->controller->identity.device) << 16) |
+                           (root.index << 12) | (1u << 8) | (port & 255),
+                       status, port_status_value);
     *handle = created;
     return status;
 }
@@ -74,7 +77,14 @@ NTSTATUS NTAPI initialize(PVOID context, PUSB_DEVICE_HANDLE handle) {
         return STATUS_DEVICE_NOT_READY;
     }
     auto *device = usb_find_device(*root.bus, handle, &root);
-    return device ? usb_initialize_device(*device) : STATUS_INVALID_PARAMETER;
+    const auto status = device ? usb_initialize_device(*device) : STATUS_INVALID_PARAMETER;
+    record_enumeration((static_cast<ULONG>(root.bus->controller->identity.device) << 16) |
+                           (root.index << 12) | (2u << 8) | (device ? device->port : 0),
+                       status,
+                       device ? (static_cast<ULONG>(device->descriptor.idVendor) << 16) |
+                                    device->descriptor.idProduct
+                              : 0);
+    return status;
 }
 NTSTATUS NTAPI remove_device(PVOID context, PUSB_DEVICE_HANDLE handle, ULONG flags) {
     auto &root = *static_cast<RootHub *>(context);

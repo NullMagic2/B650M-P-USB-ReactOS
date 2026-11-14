@@ -75,10 +75,11 @@ int main() {
     require(snapshot.final_control == ((7u << 1) | (255u << 5) | (7u << 17)),
             "reserved preserved; SMI disabled and W1C acknowledged");
     fake = {};
-    fake.release_after = 1001;
-    require(run(fake, snapshot) == HandoffResult::timeout, "BIOS refusal times out");
-    require(fake.waits == 1000 && fake.writes == 1 && (fake.header & (1u << 16)),
-            "never forces BIOS ownership or writes control after refusal");
+    fake.release_after = 5001;
+    require(run(fake, snapshot) == HandoffResult::complete && snapshot.forced,
+            "BIOS refusal ends in forced ownership");
+    require(fake.waits == 5000 && fake.writes == 3 && snapshot.os_owned,
+            "bounded wait, then ownership and SMI disable writes");
     fake = {};
     require(run(fake, snapshot, 0) == HandoffResult::complete && fake.writes == 0 &&
                 !snapshot.present,

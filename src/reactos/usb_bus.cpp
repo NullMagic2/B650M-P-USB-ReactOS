@@ -499,7 +499,9 @@ NTSTATUS usb_root_pnp(RootHub &root, PIRP irp) noexcept {
         }
         caps->Address = root.index;
         caps->UINumber = root.index;
-        caps->UniqueID = TRUE;
+        // The instance ID only tells this controller's two roots apart. Every
+        // controller reports the same pair, so PnP must qualify it by parent.
+        caps->UniqueID = FALSE;
         caps->RawDeviceOK = FALSE;
         caps->SurpriseRemovalOK = TRUE;
         caps->Removable = FALSE;

@@ -130,3 +130,69 @@ Experimental ReactOS PnP parent lifetime compatibility
   without modifying its external SDK. This candidate is not in delivered images;
   runtime qualification and exact source hashes are recorded in
   evidence/m11-pnp-parent-candidate.json. No foreign references are discarded.
+
+FreeLoader boot-disk repair (2026-10-26)
+- compat/reactos/freeldr/boot_disk.cpp adapts ReactOS
+  boot/freeldr/freeldr/arch/i386/hwdisk.c to C++ and preserves its original
+  Brian Palmer, Eric Kohl and Herve Poussineau GPL-2.0-or-later notices.
+  Upstream SHA256: 46f33f2d8951bdd58192fa55a398a5029e7128bd83d0667265f63bf0fc7831bc.
+- compat/reactos/freeldr/disk_registration.cpp adapts only DiskInitialize
+  from boot/freeldr/freeldr/disk/disk.c, retaining Hermes Belusca-Maito's
+  notices and selecting its GPL-2.0-or-later option.
+  Upstream file SHA256: 910f2995368afdbb21d7654736c75ee9da2ac52b04f077d81f592e5e0b299a41.
+- Both use the same saved i386 loader baseline as the delivered diagnostic
+  FreeLoader. The SDK and its genuine BIOS/FAT/PE algorithms remain unchanged.
+  cmake/boot_loader_repair.cmake relinks these owned components; no complete
+  ReactOS tree is copied into this project. Fault wrappers are test-only.
+
+BIOS disk transfer safety (2026-10-26)
+- compat/reactos/freeldr/bios_disk_buffer.cpp and bios_disk_io.cpp are owned
+  C++ adapters over the matching FreeLoader memory map, geometry and Int386
+  interfaces. They reuse the genuine SDK helpers without copying their source.
+- The disk packet layout and INT13/CHS conventions are checked against the
+  pinned SDK arch/i386/pc/pcdisk.c. BIOS buffer bounds are checked against
+  arch/i386/pc/pcmem.c and include/arch/pc/x86common.h.
+- Disk-reset retries introduced by the previous boot component were removed.
+  Firmware/kernel source trees and host controller bindings are unchanged.
+- The adapter now selects between two valid EDD address encodings and bounded
+  legacy CHS reads using actual INT13 AH=08 geometry. A working method is cached
+  per drive. Track splits preserve data already read into the bounce buffer;
+  requests outside representable CHS capacity fail without cylinder truncation.
+  No external firmware code is copied. The production loader excludes the
+  optional test-only interrupt and geometry wrappers in tests/bios_disk_faults.cpp.
+
+BIOS timer restoration (2026-10-27)
+- compat/reactos/freeldr/bios_startup.cpp is an owned GPL-2.0-only C++
+  wrapper over genuine HalpCalibrateStallExecution and Int386. It restores the
+  conventional BIOS channel-zero divisor after calibration; the upstream
+  delay calibration algorithm remains unchanged and is not copied.
+- Audited baseline: ReactOS a97c8a2cdcf6a9a7f5cc543951a02ccb7a80d8ca,
+  boot/freeldr/freeldr/arch/i386/pc/pchw.c. SHA256:
+  c981c2d29e6341ccc86a0e381de142239662fee75a4279db1dffe42f6262a0c2.
+- tests/bios_startup_tests.cpp contains test-only period/readback checks and
+  timeout injection; it is excluded from the installed loader. VM evidence
+  does not establish a fix for the observed physical-board BIOS timeout.
+
+UEFI USB boot trial (2026-11-13)
+- Optional media artifact: CSMWrap x64 3.1.2, unmodified upstream release
+  csmwrapx64.efi, renamed EFI/BOOT/BOOTX64.EFI. Source, submodule pins
+  and notices: https://github.com/CSMWrap/CSMWrap/tree/3.1.2 .
+  SHA256 96fdb387e177c6340287b7e07713dc09bf1f965dd404311eafd9c6eb99a02745.
+  The upstream license accompanies the local trial. Not linked into the HCD.
+- compat/reactos/freeldr/usb_pic_handoff.cpp is original GPL-2.0-only
+  C++ using PCI BIOS and the standard dual-PIC ELCR. The opt-in i386 PIC
+  handoff does not assign interrupts, reset hardware or change PCI config.
+
+Physical USB-root boot (2026-11-14)
+- compat/reactos/hidusb-report-limit.patch adds one call to ReactOS
+  drivers/hid/hidusb/hidusb.c (HidUsb_GetReportDescriptor), preserving its
+  upstream GPL-2.0-or-later terms. compat/reactos/hidusb/report_limit.cpp is
+  original GPL-2.0-only C++ that counts report fields from the HID 1.11 item
+  encoding; no parser source is copied. The parser limit it guards is the
+  16-bit PreparsedDataLength in sdk/lib/drivers/hidparser.
+- The AMD IOMMU release in src/reactos/resources.cpp is original code written
+  against the public AMD I/O Virtualization Technology specification (PCI
+  capability 0x0F, control register). The firmware quiesce and interrupt
+  silencing use only the xHCI 1.2 and PCI 3.0 register definitions.
+- The assertion report in src/reactos/boot.cpp redirects the kernel RtlAssert
+  export at run time and copies no kernel source.

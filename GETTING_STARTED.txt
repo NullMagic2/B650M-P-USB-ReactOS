@@ -48,4 +48,28 @@ Scope
   Exact reviewed MSI PRO B650M-P PCI profiles and ReactOS i386 system-file hashes.
   The installer rejects unknown baseline files and does not install the experimental
   PnP kernel patch required for the validated physical unplug/reconnect result.
-  Physical motherboard USB-root boot remains unqualified.
+  Physical motherboard USB-root boot reached the desktop on 2026-11-14 through
+  the legacy (CSM) boot entry; see evidence/physical-usb-root-boot.txt.
+
+Booting the board from a USB stick
+  Build the three modules a USB-root system needs in addition to the loader:
+    cmake -S . -B Binaries/.build/boot -DXHCI_NATIVE_CONTROLLER=ON \
+      -DXHCI_NATIVE_BOOT=ON -DXHCI_NATIVE_USB_COMPATIBILITY=ON -DXHCI_TESTS=OFF
+    cmake --build Binaries/.build/boot --target xhci_native_controller \
+      xhci_native_boot xhci_native_usb_compatibility -j4
+  Install native/xhci-controller-i386.sys as system32/drivers/xhci.sys,
+  native/xhci-boot-i386.sys as xhciboot.sys and the usb-compatibility/native
+  modules over usbhub.sys, usbstor.sys, disk.sys and hidusb.sys.
+  The options beginning XHCI_TEST_ and XHCI_VIRTUAL_TEST_CONTROLLER are emulator
+  fixtures. Never install a module built with one of them.
+
+  The stick also needs the patched FreeLoader (compat/reactos/freeldr). Without
+  its 1 GiB memory bound the stock loader cannot read the disk on machines with
+  free RAM above 4 GiB. It is relinked against a saved ReactOS loader build:
+    cmake -DXHCI_FREELDR_RECIPE=<build-recipe.json> -DXHCI_FREELDR_OUTPUT=<dir> \
+      -DXHCI_FREELDR_USB_PIC_HANDOFF=ON -P cmake/boot_loader_repair.cmake
+  The recipe lists the loader's compile and link commands and its SDK directory.
+  That SDK is not yet part of the pinned dependency bundle.
+
+  Use the normal boot entry. /DEBUGPORT=SCREEN stalls on this board. A failed
+  start or assertion is reported on a red screen by xhciboot.sys instead.

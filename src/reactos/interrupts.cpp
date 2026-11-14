@@ -8,17 +8,19 @@ Architecture: ISR never allocates; PASSIVE worker retires hardware before reuse.
 #include "runtime_internal.hpp"
 namespace xhci::native {
 namespace {
-void queue_event(Runtime &runtime) noexcept {
+// timer_origin marks service requested by the periodic timer, not the ISR.
+void queue_event(Runtime &runtime, bool timer_origin = false) noexcept {
     // Reserve lifetime before the kernel can dispatch the callback, including
     // the gap before its first instruction on another processor.
     InterlockedIncrement(&runtime.callback_references);
-    if (!KeInsertQueueDpc(&runtime.dpc, nullptr, nullptr)) {
+    if (!KeInsertQueueDpc(&runtime.dpc, timer_origin ? &runtime : nullptr, nullptr)) {
         InterlockedDecrement(&runtime.callback_references);
     }
 }
 BOOLEAN NTAPI interrupt_service(PKINTERRUPT, PVOID context) {
     auto &runtime = *static_cast<Runtime *>(context);
     if (InterlockedCompareExchange(&runtime.closing, 0, 0) || runtime.gone || !runtime.running) {
+        InterlockedIncrement(&runtime.counters.unclaimed);
         return FALSE;
     }
     ULONG status = 0, iman = 0;
@@ -26,13 +28,15 @@ BOOLEAN NTAPI interrupt_service(PKINTERRUPT, PVOID context) {
     if (!runtime.registers.read32(runtime.caps.operational_offset + 4, status) ||
         status == MAXULONG || !runtime.registers.read32(ir, iman) ||
         !(status & ((1u << 2) | (1u << 3))) || (!(status & (1u << 2)) && !(iman & 1))) {
+        InterlockedIncrement(&runtime.counters.unclaimed);
         return FALSE;
     }
+    InterlockedIncrement(&runtime.counters.interrupts);
     runtime.registers.write32(ir, 1); // W1C IP, mask IE until DPC publishes ERDP.
     runtime.registers.write32(runtime.caps.operational_offset + 4,
                               status & ((1u << 2) | (1u << 3)));
     if (status & (1u << 2)) {
-        InterlockedExchange(&runtime.fault, 1);
+        raise_fault(runtime, (1u << 16) | __LINE__);
     }
     queue_event(runtime);
     return TRUE;
@@ -52,14 +56,14 @@ void command_event(Runtime &runtime, const Trb &event) noexcept {
     const ULONGLONG address = trb_parameter(event);
     const ULONGLONG base = runtime.commands.memory.logical;
     if (address < base || address - base >= producer_entries * sizeof(Trb) || (address & 15)) {
-        InterlockedExchange(&runtime.fault, 1);
+        raise_fault(runtime, (1u << 16) | __LINE__);
         return;
     }
     const auto index = static_cast<USHORT>((address - base) / sizeof(Trb));
     auto &pending = runtime.pending[index];
     if (!pending.pending || pending.generation != runtime.generation ||
         !runtime.commands.producer.complete(index)) {
-        InterlockedExchange(&runtime.fault, 1);
+        raise_fault(runtime, (1u << 16) | __LINE__);
         return;
     }
     pending.pending = false;
@@ -69,13 +73,13 @@ void command_event(Runtime &runtime, const Trb &event) noexcept {
     pending.status = pending.result.completion_code == 1 ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
     if (pending.type != TrbType::enable_slot && pending.result.slot != pending.slot) {
         pending.status = STATUS_DEVICE_PROTOCOL_ERROR;
-        InterlockedExchange(&runtime.fault, 1);
+        raise_fault(runtime, (1u << 16) | __LINE__);
     }
     if (pending.type == TrbType::enable_slot && NT_SUCCESS(pending.status)) {
         if (!pending.result.slot || pending.result.slot > runtime.caps.slots ||
             runtime.slots[pending.result.slot].enabled) {
             pending.status = STATUS_DEVICE_PROTOCOL_ERROR;
-            InterlockedExchange(&runtime.fault, 1);
+            raise_fault(runtime, (1u << 16) | __LINE__);
         } else {
             runtime.slots[pending.result.slot].enabled = true;
         }
@@ -85,7 +89,7 @@ void command_event(Runtime &runtime, const Trb &event) noexcept {
     }
     KeSetEvent(&pending.event, IO_NO_INCREMENT, FALSE);
 }
-void NTAPI event_dpc(PKDPC, PVOID context, PVOID, PVOID) {
+void NTAPI event_dpc(PKDPC, PVOID context, PVOID timer_origin, PVOID) {
     auto &runtime = *static_cast<Runtime *>(context);
     if (InterlockedCompareExchange(&runtime.closing, 0, 0)) {
         InterlockedDecrement(&runtime.callback_references);
@@ -97,6 +101,8 @@ void NTAPI event_dpc(PKDPC, PVOID context, PVOID, PVOID) {
     ULONG drained = 0;
     while (drained < 64 && take_event(runtime, event)) {
         ++drained;
+        InterlockedIncrement(&runtime.counters.events);
+        runtime.last_event = event;
         switch (trb_type(event)) {
         case TrbType::transfer_event:
             transfer_event(runtime, event);
@@ -107,19 +113,20 @@ void NTAPI event_dpc(PKDPC, PVOID context, PVOID, PVOID) {
         case TrbType::port_event: {
             const ULONG port = event.parameter_low >> 24;
             if (!port || port > runtime.caps.ports) {
-                InterlockedExchange(&runtime.fault, 1);
+                raise_fault(runtime, (1u << 16) | __LINE__);
             } else {
                 runtime.port_changes[port / 32] |= 1u << (port % 32);
             }
             break;
         }
         case TrbType::host_event:
-            InterlockedExchange(&runtime.fault, 1);
+            raise_fault(runtime, (1u << 16) | __LINE__);
             break;
         default:
-            // M06 must install real transfer correlation before ringing endpoints.
+            // Event types this driver requests nothing from (device
+            // notification, MFINDEX wrap, vendor defined) need no action.
             ++runtime.unexpected_events;
-            InterlockedExchange(&runtime.fault, 1);
+            note_stray(runtime, event);
             break;
         }
     }
@@ -133,9 +140,26 @@ void NTAPI event_dpc(PKDPC, PVOID context, PVOID, PVOID) {
     if (!fault && !runtime.gone && !InterlockedCompareExchange(&runtime.closing, 0, 0)) {
         // Preserve a newly pending IP: only ISR acknowledges it. Clearing IP
         // here could erase an event arriving between the empty poll and ERDP.
-        runtime.registers.write32(ir, 2);
+        // Events that only the timer finds were never signalled on the
+        // assigned line. After three such batches stop relying on it: keep
+        // the interrupter masked so an unrouted level line is never asserted.
+        if (timer_origin && drained) {
+            InterlockedIncrement(&runtime.counters.polled);
+            if (++runtime.timer_batches >= 3) {
+                InterlockedExchange(&runtime.counters.polling, 1);
+            }
+        }
+        const bool polling = InterlockedCompareExchange(&runtime.counters.polling, 0, 0) != 0;
+        runtime.registers.write32(ir, polling ? 1 : 2);
+        if (polling) {
+            ULONG status = 0;
+            if (runtime.registers.read32(runtime.caps.operational_offset + 4, status) &&
+                status != MAXULONG && (status & (1u << 3))) {
+                runtime.registers.write32(runtime.caps.operational_offset + 4, 1u << 3);
+            }
+        }
         if (drained == 64) {
-            queue_event(runtime);
+            queue_event(runtime, timer_origin != nullptr);
         }
     }
     // Unregistration may run after this lock is dropped. Snapshot the pair
@@ -165,6 +189,22 @@ void NTAPI timeout_dpc(PKDPC, PVOID context, PVOID, PVOID) {
         InterlockedDecrement(&runtime.callback_references);
         return;
     }
+    // More than 2000 foreign interrupts in one period with none of this
+    // controller's own is a flood, not sharing.
+#ifdef XHCI_TEST_INTERRUPT_FLOOD
+    // Emulator fixture: model a foreign device holding the shared line.
+    if (!runtime.counters.flooded) {
+        InterlockedExchangeAdd(&runtime.counters.unclaimed, 5000);
+    }
+#endif
+    const LONG unclaimed = runtime.counters.unclaimed, claimed = runtime.counters.interrupts;
+    if (runtime.interrupt && !runtime.counters.polling &&
+        unclaimed - runtime.flood_baseline > 2000 && claimed == runtime.flood_claimed) {
+        InterlockedExchange(&runtime.flood_relief, 1);
+        request_recovery(runtime);
+    }
+    runtime.flood_baseline = unclaimed;
+    runtime.flood_claimed = claimed;
     const auto now = KeQueryInterruptTime();
     bool expired = false;
     ULONG hardware_status = 0;
@@ -183,8 +223,20 @@ void NTAPI timeout_dpc(PKDPC, PVOID context, PVOID, PVOID) {
     }
     KeReleaseSpinLock(&runtime.lock, old_irql);
     if (expired) {
-        InterlockedExchange(&runtime.fault, 1);
+        // Keep the first expiry's controller state for the start record,
+        // before recovery halts and resets the controller.
+        if (!runtime.gone && !InterlockedExchange(&runtime.expiry_taken, 1)) {
+            const ULONG op = runtime.caps.operational_offset;
+            const ULONG ir = runtime.caps.runtime_offset + runtime_interrupters_offset;
+            runtime.registers.read32(op + 4, runtime.expiry[0]);
+            runtime.registers.read32(op + 0x18, runtime.expiry[1]);
+            runtime.registers.read32(ir, runtime.expiry[2]);
+            runtime.expiry[3] = static_cast<volatile Trb *>(runtime.events.address)->control;
+        }
+        raise_fault(runtime, (1u << 16) | __LINE__);
         request_recovery(runtime);
+    } else if (runtime.running) {
+        queue_event(runtime, true);
     }
     if (!InterlockedCompareExchange(&runtime.closing, 0, 0) &&
         !InterlockedCompareExchange(&runtime.fault, 0, 0)) {
@@ -195,6 +247,20 @@ void NTAPI timeout_dpc(PKDPC, PVOID context, PVOID, PVOID) {
 void NTAPI recovery_worker(PDEVICE_OBJECT, PVOID context) {
     auto &runtime = *static_cast<Runtime *>(context);
     KeWaitForSingleObject(&runtime.lifecycle, Executive, KernelMode, FALSE, nullptr);
+    if (InterlockedExchange(&runtime.flood_relief, 0) &&
+        !InterlockedCompareExchange(&runtime.closing, 0, 0) &&
+        !InterlockedCompareExchange(&runtime.fault, 0, 0)) {
+        // Another device holds the shared level line asserted. Leave the line
+        // so the HAL can mask it once no handler remains; the timer services
+        // this controller from now on. Nothing else about the runtime changes.
+        InterlockedExchange(&runtime.counters.polling, 1);
+        InterlockedExchange(&runtime.counters.flooded, 1);
+        disconnect_interrupt(runtime);
+        KeReleaseMutex(&runtime.lifecycle, FALSE);
+        InterlockedExchange(&runtime.worker_queued, 0);
+        KeSetEvent(&runtime.worker_idle, IO_NO_INCREMENT, FALSE);
+        return;
+    }
     if (!InterlockedCompareExchange(&runtime.closing, 0, 0)) {
         const bool joined = join_callbacks(runtime);
         const bool retired = joined && hardware_stop(runtime);
@@ -248,6 +314,10 @@ void initialize_callbacks(Runtime &runtime) noexcept {
     KeInitializeTimer(&runtime.timer);
 }
 NTSTATUS connect_interrupt(Runtime &runtime) noexcept {
+#ifdef XHCI_TEST_NO_INTERRUPT
+    // Emulator fixture: model an interrupt line that never delivers.
+    return STATUS_NOT_SUPPORTED;
+#endif
     const auto &resource = runtime.interrupt_resource;
     if (resource.Type != CmResourceTypeInterrupt ||
         (resource.Flags & CM_RESOURCE_INTERRUPT_MESSAGE) ||
@@ -302,8 +372,9 @@ void complete_all(Runtime &runtime, NTSTATUS status) noexcept {
     }
 }
 void arm_timeout(Runtime &runtime) noexcept {
+    // 100 ms watchdog; one clock tick while the timer also delivers events.
     LARGE_INTEGER due{};
-    due.QuadPart = -1000000;
+    due.QuadPart = InterlockedCompareExchange(&runtime.counters.polling, 0, 0) ? -10000 : -1000000;
     InterlockedIncrement(&runtime.callback_references);
     KeSetTimer(&runtime.timer, due, &runtime.timer_dpc);
 }

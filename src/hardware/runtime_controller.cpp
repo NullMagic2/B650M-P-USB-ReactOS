@@ -41,25 +41,30 @@ bool hardware_stop(Runtime &runtime) noexcept {
 }
 NTSTATUS hardware_start(Runtime &runtime) noexcept {
     const ULONG op = runtime.caps.operational_offset;
-    if (!wait_bits(runtime, op + 4, 1u << 11, 0, 1000)) {
+    runtime.start_step = 1;
+    if (!wait_bits(runtime, op + 4, 1u << 11, 0, 5000)) {
         runtime.quarantined = true;
         runtime.stopped = false;
         return STATUS_IO_TIMEOUT;
     }
+    runtime.start_step = 2;
     ULONG page_sizes = 0;
     if (!runtime.registers.read32(op + 8, page_sizes) || !(page_sizes & 1)) {
         return STATUS_NOT_SUPPORTED;
     }
+    runtime.start_step = 3;
     if (!hardware_stop(runtime)) {
         return STATUS_IO_TIMEOUT;
     }
-    if (!runtime.registers.write32(op, 2) || !wait_bits(runtime, op, 2, 0, 1000) ||
-        !wait_bits(runtime, op + 4, 1u << 11, 0, 1000)) {
+    runtime.start_step = 4;
+    if (!runtime.registers.write32(op, 2) || !wait_bits(runtime, op, 2, 0, 5000) ||
+        !wait_bits(runtime, op + 4, 1u << 11, 0, 5000)) {
         runtime.programmed = true;
         runtime.stopped = false;
         runtime.quarantined = true;
         return STATUS_IO_TIMEOUT;
     }
+    runtime.start_step = 5;
     runtime.commands.producer.reset();
     runtime.consumer = EventRing{};
     RtlZeroMemory(runtime.commands.memory.address, runtime.commands.memory.bytes);
@@ -93,6 +98,7 @@ NTSTATUS hardware_start(Runtime &runtime) noexcept {
         return STATUS_IO_TIMEOUT;
     }
     runtime.running = true;
+    runtime.start_step = 6;
     return STATUS_SUCCESS;
 }
 } // namespace xhci::native

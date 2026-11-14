@@ -12,7 +12,19 @@ Supported PCI device IDs are AMD `1022:43F7`, `1022:15B9`, `1022:15BA`, `1022:15
 
 The current package supports control, bulk and interrupt transfers, USB2/USB3 logical root hubs, storage reads/writes and cache flushes. Isochronous transfers, streams/UAS and general suspend/hibernation are outside this release's scope.
 
-Selected physical-controller storage read/write, flush and restart/readback tests passed. **Known issue:** physical unplug/reconnect recovery required the ReactOS PnP kernel patch under `compat/reactos/pnp*`; that kernel change is not installed by this package. Physical motherboard USB-root boot and other board controllers remain unqualified. The full installer install/rollback runtime matrix has not been completed.
+Selected physical-controller storage read/write, flush and restart/readback tests passed. **Known issue:** physical unplug/reconnect recovery required the ReactOS PnP kernel patch under `compat/reactos/pnp*`; that kernel change is not installed by this package. The full installer install/rollback runtime matrix has not been completed.
+
+## Booting the real board from USB
+
+On 2026-11-14 the board booted ReactOS to the desktop from a USB stick through the legacy (CSM) boot entry, with all five controllers started. That needed changes in three places, all in this repository:
+
+- **FreeLoader** (`compat/reactos/freeldr`): with about 127 GiB of RAM the 32-bit loader placed its page table over firmware memory and every BIOS disk read then timed out. The loader now uses the first GiB only, so ReactOS sees 1 GiB.
+- **`xhci.sys`**: the firmware leaves the AMD IOMMU translating and its own USB stack running. The driver releases the IOMMU, halts firmware-owned controllers, takes ownership when the BIOS handoff goes unanswered, and polls when the shared interrupt line is unusable. Root-hub handling was corrected for the `1022:43F7` controller.
+- **`xhciboot.sys` and `hidusb.sys`**: the boot bridge admits removable boot media and shows a red on-screen report when a start or assertion fails. HIDUSB refuses the board's MYSTIC LIGHT report descriptor, which the ReactOS HID parser cannot hold.
+
+The v0.1.1 installer predates these changes; build from source as described in [GETTING_STARTED.txt](GETTING_STARTED.txt). The sequence of failures and fixes is in [evidence/physical-usb-root-boot.txt](evidence/physical-usb-root-boot.txt).
+
+Still open: assigning `C:` to the USB system volume when an internal disk is present is fixed in the emulator but not yet confirmed on the board; `1022:43F7` appears to run in polling mode; MYSTIC LIGHT lighting control does not work; and rebuilding FreeLoader needs a matching loader SDK that the automatic dependency download does not yet provide.
 
 Build instructions are in [GETTING_STARTED.txt](GETTING_STARTED.txt); installation and recovery options are in [packaging/INSTALL.txt](packaging/INSTALL.txt). Run the installer with `--extract` to export its verified runtime payloads. No source archive or full ReactOS tree is embedded in the installer.
 

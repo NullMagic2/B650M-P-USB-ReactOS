@@ -8,6 +8,9 @@ if(XHCI_TESTS)
     target_link_libraries(xhci_usb_policy_tests PRIVATE xhci_core)
     xhci_cpp(xhci_usb_policy_tests)
     add_test(NAME xhci_usb_policy COMMAND xhci_usb_policy_tests)
+    add_executable(xhci_hid_report_limit_tests tests/hid_report_limit_tests.cpp)
+    xhci_cpp(xhci_hid_report_limit_tests)
+    add_test(NAME xhci_hid_report_limit COMMAND xhci_hid_report_limit_tests)
 endif()
 set(XHCI_M07_M08_NATIVE_SOURCES
     src/core/usb_policy.cpp

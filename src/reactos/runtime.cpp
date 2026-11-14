@@ -109,6 +109,27 @@ NTSTATUS runtime_create(PDEVICE_OBJECT fdo, PDEVICE_OBJECT pdo, const RegisterVi
     runtime = owner;
     return STATUS_SUCCESS;
 }
+RuntimeCounters *runtime_counters(Runtime *runtime) noexcept {
+    return runtime ? &runtime->counters : nullptr;
+}
+ULONG runtime_start_state(Runtime *runtime, ULONG state[8], ULONG expiry[4]) noexcept {
+    if (!runtime) {
+        return 0;
+    }
+    RtlCopyMemory(expiry, runtime->expiry, sizeof(runtime->expiry));
+    const ULONG op = runtime->caps.operational_offset;
+    const ULONG ir = runtime->caps.runtime_offset + 0x20;
+    const ULONG offsets[] = {op, op + 4, op + 0x18, op + 0x30, ir, ir + 0x18};
+    for (ULONG i = 0; i < 6; ++i) {
+        state[i] = MAXULONG;
+        runtime->registers.read32(offsets[i], state[i]);
+    }
+    state[6] = runtime->commands.memory.address
+                   ? static_cast<volatile Trb *>(runtime->commands.memory.address)->control : 0;
+    state[7] = runtime->events.address
+                   ? static_cast<volatile Trb *>(runtime->events.address)->control : 0;
+    return runtime->start_step;
+}
 NTSTATUS runtime_start(Runtime *runtime) noexcept {
     if (!runtime || KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_PARAMETER;
@@ -116,10 +137,19 @@ NTSTATUS runtime_start(Runtime *runtime) noexcept {
     KeWaitForSingleObject(&runtime->lifecycle, Executive, KernelMode, FALSE, nullptr);
     NTSTATUS status = STATUS_INVALID_DEVICE_STATE;
     if (!runtime->programmed && !runtime->quarantined && !runtime->closing) {
-        status = connect_interrupt(*runtime);
-        if (NT_SUCCESS(status)) {
-            status = hardware_start(*runtime);
+        // Without a usable interrupt the timer services the event ring.
+        if (!NT_SUCCESS(connect_interrupt(*runtime))) {
+            InterlockedExchange(&runtime->counters.polling, 1);
         }
+        status = hardware_start(*runtime);
+#ifdef XHCI_TEST_FIRST_START_RESET
+        // Emulator fixture: model firmware resetting the controller under the
+        // first start, so its first command can never complete.
+        static LONG interfered;
+        if (NT_SUCCESS(status) && !InterlockedExchange(&interfered, 1)) {
+            runtime->registers.write32(runtime->caps.operational_offset, 2);
+        }
+#endif
         if (NT_SUCCESS(status)) {
             arm_timeout(*runtime);
         } else {
@@ -131,6 +161,7 @@ NTSTATUS runtime_start(Runtime *runtime) noexcept {
         // A real No-op completion must traverse the assigned interrupt route.
         // Merely obtaining a vector does not qualify delivery on this platform.
         CommandResult route{};
+        runtime->start_step = 7;
         status = runtime_command(runtime, TrbType::noop, 0, 0, 0, 0, route);
     }
     return status;
@@ -271,7 +302,7 @@ NTSTATUS runtime_command(Runtime *runtime, TrbType type, UCHAR slot, UCHAR endpo
         !runtime->gone && runtime->registers.write32(runtime->caps.doorbell_offset, 0);
     KeReleaseSpinLock(&runtime->lock, old_irql);
     if (!rung) {
-        InterlockedExchange(&runtime->fault, 1);
+        raise_fault(*runtime, (3u << 16) | __LINE__);
         request_recovery(*runtime);
     }
     KeWaitForSingleObject(&pending.event, Executive, KernelMode, FALSE, nullptr);
@@ -376,7 +407,7 @@ NTSTATUS runtime_cancel_commands(Runtime *runtime, ULONG generation) noexcept {
         return STATUS_NOT_FOUND;
     }
     InterlockedExchange(&runtime->recovery_status, STATUS_CANCELLED);
-    InterlockedExchange(&runtime->fault, 1);
+    raise_fault(*runtime, (3u << 16) | __LINE__);
     KeReleaseSpinLock(&runtime->lock, old_irql);
     request_recovery(*runtime);
     return STATUS_SUCCESS;

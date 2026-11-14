@@ -51,7 +51,8 @@ foreach(manifest m07-usbstor-patch-inputs.json m08-usbhub-patch-inputs.json m07-
         endif()
     endforeach()
 endforeach()
-foreach(patch usbstor-transport.patch usbhub-superspeed.patch disk-shutdown.patch boot-usage.patch hidusb-cancellation.patch)
+foreach(patch usbstor-transport.patch usbhub-superspeed.patch disk-shutdown.patch boot-usage.patch hidusb-cancellation.patch
+    hidusb-report-limit.patch)
     execute_process(COMMAND "${patch_tool}" -p1 --batch --forward
         WORKING_DIRECTORY "${stage}" INPUT_FILE "${XHCI_COMPAT_ROOT}/compat/reactos/${patch}"
         OUTPUT_VARIABLE patch_output ERROR_VARIABLE patch_error RESULT_VARIABLE result)
@@ -63,6 +64,10 @@ set(flags -O2 -D_CRT_NON_CONFORMING_SWPRINTFS -D__REACTOS__ -D_X86_ -D_M_IX86
     -DWINVER=0x502 -D_WIN32_WINNT=0x502 -DNTDDI_VERSION=0x05020100
     -D_USE_PSEH3=1 -fms-extensions -ffreestanding -fno-stack-protector
     -fno-strict-aliasing -Wall -Wextra -Wno-multichar -Wno-unknown-pragmas)
+if(DEFINED XHCI_TEST_HID_FIELD_LIMIT)
+    # Emulator fixture only; never used for delivered modules.
+    list(APPEND flags "-DXHCI_TEST_HID_FIELD_LIMIT=${XHCI_TEST_HID_FIELD_LIMIT}")
+endif()
 if(XHCI_COMPAT_DEBUG)
     # Qualification builds retain upstream failure diagnostics and assertions.
     # Default production artifacts keep their existing compilation policy.
@@ -129,6 +134,7 @@ foreach(driver usbhub usbstor disk hidusb)
         set(extra "${XHCI_REACTOS_BUILD}/sdk/lib/drivers/sptilib/libsptilib.a")
     elseif(driver STREQUAL "hidusb")
         compile_input("${driver}" "${XHCI_COMPAT_ROOT}/compat/reactos/hidusb/cancellation.cpp" TRUE)
+        compile_input("${driver}" "${XHCI_COMPAT_ROOT}/compat/reactos/hidusb/report_limit.cpp" TRUE)
         set(extra "${XHCI_REACTOS_BUILD}/drivers/hid/hidclass/CMakeFiles/libhidclass.dir/libhidclass.a")
     else()
         compile_input("${driver}" "${XHCI_COMPAT_ROOT}/compat/reactos/disk/shutdown.cpp" TRUE)

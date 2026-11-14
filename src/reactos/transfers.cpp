@@ -56,7 +56,7 @@ void transfer_event(Runtime &runtime, const Trb &event) noexcept {
     const UCHAR endpoint = static_cast<UCHAR>((event.control >> 16) & 31);
     const UCHAR code = static_cast<UCHAR>(event.status >> 24);
     if (!slot || slot > runtime.caps.slots || !endpoint || (event.control & 4)) {
-        InterlockedExchange(&runtime.fault, 1);
+        raise_fault(runtime, (2u << 16) | __LINE__);
         return;
     }
     auto &owner = runtime.slots[slot];
@@ -75,9 +75,13 @@ void transfer_event(Runtime &runtime, const Trb &event) noexcept {
         if (forced_stop && (!transfer || transfer->generation == runtime.generation)) {
             return;
         }
+        // A controller may report a transfer descriptor twice: once at the
+        // short packet and again at its last TRB. The second report, or any
+        // other event for an endpoint with nothing outstanding, changes no
+        // ownership here; each transfer's own deadline covers a lost one.
         DbgPrint("XHCI_NATIVE transfer event without active TD slot=%u endpoint=%u code=%u "
                  "generation=%lu\n", slot, endpoint, code, runtime.generation);
-        InterlockedExchange(&runtime.fault, 1);
+        note_stray(runtime, event);
         return;
     }
     USHORT index = transfer->descriptor.count;
@@ -91,7 +95,7 @@ void transfer_event(Runtime &runtime, const Trb &event) noexcept {
     if (!transfer_event_length(transfer->descriptor, index, code, residual, actual)) {
         transfer->status = STATUS_DEVICE_PROTOCOL_ERROR;
         transfer->pending = false;
-        InterlockedExchange(&runtime.fault, 1);
+        raise_fault(runtime, (2u << 16) | __LINE__);
         KeSetEvent(&transfer->event, IO_NO_INCREMENT, FALSE);
         return;
     }
@@ -109,7 +113,7 @@ void transfer_event(Runtime &runtime, const Trb &event) noexcept {
             }
         }
         if (transfer->descriptor.control && type != TrbType::status) {
-            InterlockedExchange(&runtime.fault, 1);
+            raise_fault(runtime, (2u << 16) | __LINE__);
             return;
         }
         if (!transfer->short_packet) {
@@ -250,7 +254,7 @@ NTSTATUS runtime_transfer(Runtime *runtime, UCHAR slot, UCHAR endpoint, USHORT p
         }
         if (!publish_descriptor(owner.endpoints[endpoint], *transfer) ||
             !runtime->registers.write32(runtime->caps.doorbell_offset + slot * 4, endpoint)) {
-            InterlockedExchange(&runtime->fault, 1);
+            raise_fault(*runtime, (2u << 16) | __LINE__);
         }
     }
     KeReleaseSpinLock(&runtime->lock, irql);
@@ -280,7 +284,7 @@ NTSTATUS runtime_transfer(Runtime *runtime, UCHAR slot, UCHAR endpoint, USHORT p
                 transfer->pending = false;
                 KeSetEvent(&transfer->event, IO_NO_INCREMENT, FALSE);
             } else {
-                InterlockedExchange(&runtime->fault, 1);
+                raise_fault(*runtime, (2u << 16) | __LINE__);
             }
             KeReleaseSpinLock(&runtime->lock, irql);
             if (!NT_SUCCESS(aborted)) {
@@ -291,7 +295,7 @@ NTSTATUS runtime_transfer(Runtime *runtime, UCHAR slot, UCHAR endpoint, USHORT p
     if (!transfer->retired && !runtime->closing && !runtime->fault) {
         const NTSTATUS repaired = runtime_abort_endpoint(runtime, slot, endpoint, true);
         if (!NT_SUCCESS(repaired)) {
-            InterlockedExchange(&runtime->fault, 1);
+            raise_fault(*runtime, (2u << 16) | __LINE__);
             request_recovery(*runtime);
         }
     }

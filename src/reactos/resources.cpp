@@ -5,6 +5,7 @@ Purpose: Admit assigned PCI BAR/INTx, own bus interface and bounded firmware sna
 Created: 2026-10-25
 Architecture: PASSIVE_LEVEL device lifecycle only; no raw BAR sizing or address probing.
 */
+#include "boot_trace.hpp"
 #include "device.hpp"
 #include "usb.hpp"
 #include "runtime_power.hpp"
@@ -13,6 +14,7 @@ Architecture: PASSIVE_LEVEL device lifecycle only; no raw BAR sizing or address 
 namespace xhci::native {
 namespace {
 constexpr ULONG maximum_assigned_descriptors = 64;
+constexpr ULONG start_attempts = 4;
 constexpr USHORT pci_command_memory = 2, pci_command_master = 4;
 const GUID bus_interface_guid = {
     0x496b8280, 0x6f25, 0x11d0, {0xbe, 0xaf, 0x08, 0x00, 0x2b, 0xe2, 0x09, 0x2f}};
@@ -204,6 +206,313 @@ bool stop_device(Device &device, bool surprise) noexcept {
     device.changed_bus_master = false;
     return true;
 }
+namespace {
+ULONG config_read(ULONG bus, ULONG slot, ULONG offset, ULONG bytes) noexcept {
+    ULONG value{};
+    return HalGetBusDataByOffset(PCIConfiguration, bus, slot, &value, offset, bytes) == bytes
+               ? value : MAXULONG;
+}
+volatile LONG firmware_quiesced{}, firmware_controllers{};
+// PASSIVE_LEVEL, once per boot, before this driver connects any interrupt.
+// Firmware that booted over USB leaves every xHCI controller running with its
+// own rings and interrupts enabled. Controllers share level-triggered lines,
+// so the first line this driver connects would be held asserted by a sibling
+// that has not started yet, and a running sibling keeps writing events into
+// memory the OS now owns. Halt them all and mask their interrupts first, as
+// the pinned Linux reference does in its early USB handoff. Each controller's
+// own start still performs ownership handoff and reset.
+void quiesce_firmware_controllers() noexcept {
+    if (InterlockedExchange(&firmware_quiesced, 1)) {
+        return;
+    }
+    for (ULONG bus = 0; bus < 256; ++bus) {
+        for (ULONG number = 0; number < 256; ++number) {
+            PCI_SLOT_NUMBER slot{};
+            slot.u.bits.DeviceNumber = number >> 3;
+            slot.u.bits.FunctionNumber = number & 7;
+            const auto id = config_read(bus, slot.u.AsULONG, 0, 4);
+            if (id == MAXULONG || !(id & 0xffff) ||
+                (config_read(bus, slot.u.AsULONG, 8, 4) >> 8) != 0x0c0330 ||
+                !(config_read(bus, slot.u.AsULONG, 4, 2) & pci_command_memory)) {
+                continue;
+            }
+            const auto low = config_read(bus, slot.u.AsULONG, 0x10, 4);
+            if (low == MAXULONG || (low & 1) || !(low & ~15u) ||
+                (((low >> 1) & 3) == 2 && config_read(bus, slot.u.AsULONG, 0x14, 4))) {
+                continue;
+            }
+            PHYSICAL_ADDRESS base;
+            base.QuadPart = low & ~15u;
+            auto *registers = static_cast<PUCHAR>(MmMapIoSpace(base, PAGE_SIZE, MmNonCached));
+            if (!registers) {
+                continue;
+            }
+            // Capability and operational registers lie within the first page.
+            const ULONG length = READ_REGISTER_UCHAR(registers);
+            if (length >= 0x20 && length <= PAGE_SIZE - 8) {
+                auto *command = reinterpret_cast<PULONG>(registers + length);
+                const auto value = READ_REGISTER_ULONG(command);
+                if (value != MAXULONG) {
+                    // Run, interrupter enable and host-system-error enable off.
+                    WRITE_REGISTER_ULONG(command, value & ~13u);
+                    for (ULONG wait = 0; wait < 100; ++wait) {
+                        if (READ_REGISTER_ULONG(command + 1) & 1) {
+                            break;
+                        }
+                        firmware_wait(nullptr, 1);
+                    }
+                    InterlockedIncrement(&firmware_controllers);
+                }
+            }
+            MmUnmapIoSpace(registers, PAGE_SIZE);
+        }
+    }
+}
+// PASSIVE_LEVEL, before this controller's interrupt is connected. The firmware
+// routes many devices to each legacy interrupt line. A device it left
+// asserting that line, with no driver to service it, would hold the level
+// line active forever once this driver unmasks it. PCI status bit 3 shows the
+// pin state even while the line is masked. Disable the pin interrupt of every
+// other device that keeps asserting this controller's line; a device whose
+// driver is already servicing it does not stay asserted across both samples.
+void silence_stale_interrupts(Device &device) noexcept {
+    device.silenced = 0;
+    UCHAR line{};
+    ULONG own_bus{}, own_address{}, length{};
+    if (!read_pci(device, 0x3c, &line, sizeof(line)) || !line || line > 15 ||
+        !NT_SUCCESS(IoGetDeviceProperty(device.pdo, DevicePropertyBusNumber, sizeof(own_bus),
+                                        &own_bus, &length)) ||
+        !NT_SUCCESS(IoGetDeviceProperty(device.pdo, DevicePropertyAddress, sizeof(own_address),
+                                        &own_address, &length))) {
+        return;
+    }
+    constexpr USHORT pin_asserted = 1u << 3, pin_disable = 1u << 10;
+    for (ULONG bus = 0; bus < 256; ++bus) {
+        for (ULONG number = 0; number < 256; ++number) {
+            PCI_SLOT_NUMBER slot{};
+            slot.u.bits.DeviceNumber = number >> 3;
+            slot.u.bits.FunctionNumber = number & 7;
+            const auto id = config_read(bus, slot.u.AsULONG, 0, 4);
+            if (id == MAXULONG || !(id & 0xffff)) {
+                continue;
+            }
+            if (bus == own_bus && (number >> 3) == (own_address >> 16) &&
+                (number & 7) == (own_address & 7)) {
+                continue;
+            }
+            const auto routing = config_read(bus, slot.u.AsULONG, 0x3c, 2);
+            auto command = static_cast<USHORT>(config_read(bus, slot.u.AsULONG, 4, 2));
+            if ((routing & 0xff) != line || !((routing >> 8) & 0xff) || (command & pin_disable) ||
+                !(config_read(bus, slot.u.AsULONG, 6, 2) & pin_asserted)) {
+                continue;
+            }
+            firmware_wait(nullptr, 2);
+            if (!(config_read(bus, slot.u.AsULONG, 6, 2) & pin_asserted)) {
+                continue;
+            }
+            command |= pin_disable;
+            HalSetBusDataByOffset(PCIConfiguration, bus, slot.u.AsULONG, &command, 4,
+                                  sizeof(command));
+            if (device.silenced < 4) {
+                device.silenced_device[device.silenced] = (bus << 24) | (number << 16) | (id >> 16);
+            }
+            ++device.silenced;
+        }
+    }
+}
+// PASSIVE_LEVEL. A device behind PCI bridges can master the bus only when
+// every bridge above it forwards memory transactions in both directions. The
+// bus driver starts no driver for those bridges, so their firmware state
+// stands; enable forwarding where it is off and remember what was found.
+void prepare_bridge_path(Device &device) noexcept {
+    device.bridges = device.repaired = 0;
+    ULONG bus{}, length{};
+    if (!NT_SUCCESS(IoGetDeviceProperty(device.pdo, DevicePropertyBusNumber, sizeof(bus), &bus,
+                                        &length))) {
+        return;
+    }
+    // Each step moves to a lower-numbered primary bus, so the path is bounded.
+    while (bus && device.bridges < 4) {
+        bool found{};
+        for (ULONG parent = 0; parent < bus && !found; ++parent) {
+            for (ULONG number = 0; number < 256 && !found; ++number) {
+                PCI_SLOT_NUMBER slot{};
+                slot.u.bits.DeviceNumber = number >> 3;
+                slot.u.bits.FunctionNumber = number & 7;
+                const auto id = config_read(parent, slot.u.AsULONG, 0, 4);
+                if (id == MAXULONG || !(id & 0xffff) ||
+                    (config_read(parent, slot.u.AsULONG, 0x0e, 1) & 0x7f) != 1 ||
+                    config_read(parent, slot.u.AsULONG, 0x19, 1) != bus) {
+                    continue;
+                }
+                auto command = static_cast<USHORT>(config_read(parent, slot.u.AsULONG, 4, 2));
+                const auto index = device.bridges++;
+                device.bridge[index] = (parent << 24) | (number << 16) | command;
+                device.bridge_slot[index] = slot.u.AsULONG;
+                if ((command & (pci_command_memory | pci_command_master)) !=
+                    (pci_command_memory | pci_command_master)) {
+                    command |= pci_command_memory | pci_command_master;
+                    HalSetBusDataByOffset(PCIConfiguration, parent, slot.u.AsULONG, &command, 4,
+                                          sizeof(command));
+                    ++device.repaired;
+                }
+                // Clear stale abort flags so the start record shows new ones.
+                USHORT secondary = 0xf900;
+                HalSetBusDataByOffset(PCIConfiguration, parent, slot.u.AsULONG, &secondary, 0x1e,
+                                      sizeof(secondary));
+                bus = parent;
+                found = true;
+            }
+        }
+        if (!found) {
+            break;
+        }
+    }
+}
+// PASSIVE_LEVEL. Locate the AMD IOMMU control register through its PCI
+// capability. On a legacy boot this board's firmware leaves the IOMMU
+// translating with its own pre-boot tables, which refuse every DMA address
+// the OS assigns; the controller then runs but can neither fetch a command
+// nor store an event. No ReactOS component manages the IOMMU, so turn it off
+// in the order the pinned Linux reference uses: command buffer and event
+// logging first, translation last. Affects all devices; nothing re-enables it.
+void release_iommu(Device &device) noexcept {
+    device.iommu = device.iommu_after = MAXULONG;
+    PCI_SLOT_NUMBER slot{};
+    slot.u.bits.FunctionNumber = 2;
+    if ((config_read(0, slot.u.AsULONG, 0, 2) & 0xffff) != 0x1022 ||
+        (config_read(0, slot.u.AsULONG, 0x0a, 2) & 0xffff) != 0x0806) {
+        return;
+    }
+    ULONG pointer = config_read(0, slot.u.AsULONG, 0x34, 1) & 0xfc;
+    for (ULONG guard = 0; pointer >= 0x40 && guard < 48; ++guard) {
+        const auto header = config_read(0, slot.u.AsULONG, pointer, 4);
+        if ((header & 0xff) == 0x0f) {
+            const auto low = config_read(0, slot.u.AsULONG, pointer + 4, 4);
+            const auto high = config_read(0, slot.u.AsULONG, pointer + 8, 4);
+            if (low == MAXULONG || high || !(low & 1)) {
+                return;
+            }
+            PHYSICAL_ADDRESS base;
+            base.QuadPart = low & 0xffffc000;
+            auto *registers = static_cast<volatile ULONG *>(MmMapIoSpace(base, 0x1000, MmNonCached));
+            if (registers) {
+                auto *control = const_cast<PULONG>(registers + 6);
+                auto value = READ_REGISTER_ULONG(control);
+                device.iommu = value;
+                if (value != MAXULONG && (value & 1)) {
+                    constexpr ULONG translation = 1, event_log = 1u << 2,
+                                    event_interrupt = 1u << 3, command_buffer = 1u << 12;
+                    value &= ~(command_buffer | event_interrupt | event_log);
+                    WRITE_REGISTER_ULONG(control, value);
+                    WRITE_REGISTER_ULONG(control, value & ~translation);
+                }
+                device.iommu_after = READ_REGISTER_ULONG(control);
+                MmUnmapIoSpace(const_cast<PULONG>(registers), 0x1000);
+            }
+            return;
+        }
+        pointer = (header >> 8) & 0xfc;
+    }
+}
+volatile LONG attached{}, start_requests{}, lower_failures{}, last_lower_failure{};
+EnumerationLog enumeration_log{};
+void write_trace(PCWSTR name, const BootTrace &trace) noexcept {
+    UNICODE_STRING path;
+    RtlInitUnicodeString(&path, boot_trace_key);
+    OBJECT_ATTRIBUTES attributes;
+    InitializeObjectAttributes(&attributes, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+                               nullptr, nullptr);
+    HANDLE key{};
+    if (!NT_SUCCESS(ZwCreateKey(&key, KEY_SET_VALUE, &attributes, 0, nullptr,
+                                REG_OPTION_VOLATILE, nullptr))) {
+        return;
+    }
+    UNICODE_STRING value;
+    RtlInitUnicodeString(&value, name);
+    ZwSetValueKey(key, &value, 0, REG_BINARY, const_cast<BootTrace *>(&trace), sizeof(trace));
+    ZwClose(key);
+}
+// Identity zero marks the driver-wide summary record.
+void record_summary() noexcept {
+    BootTrace trace{};
+    trace.vector = static_cast<ULONG>(attached);
+    trace.level = static_cast<ULONG>(start_requests);
+    trace.ports = static_cast<ULONG>(lower_failures);
+    trace.status = static_cast<ULONG>(last_lower_failure);
+    trace.handoff = static_cast<ULONG>(firmware_controllers);
+    trace.registers = reinterpret_cast<ULONG_PTR>(&enumeration_log);
+    write_trace(L"0000", trace);
+}
+// PASSIVE_LEVEL. Best effort: a missing record only shortens the boot bridge's
+// failure report. The key is volatile and never read by this driver.
+void record_start(const Device &device, StartStage stage, NTSTATUS status,
+                  HandoffResult handoff, ULONG attempts) noexcept {
+    BootTrace trace{};
+    trace.stage = static_cast<ULONG>(stage);
+    trace.status = static_cast<ULONG>(status);
+    trace.identity = (static_cast<ULONG>(device.identity.vendor) << 16) | device.identity.device;
+    trace.vector = device.interrupt.u.Interrupt.Vector;
+    trace.level = device.interrupt.u.Interrupt.Level;
+    trace.legacy_initial = device.firmware.initial_legacy;
+    trace.legacy_final = device.firmware.final_legacy;
+    trace.control_initial = device.firmware.initial_control;
+    trace.control_final = device.firmware.final_control;
+    trace.handoff = static_cast<ULONG>(handoff) | (device.firmware.forced ? 0x100u : 0u) |
+                    (device.firmware.present ? 0x200u : 0u) | (attempts << 12);
+    trace.waited_milliseconds = device.firmware.waited_milliseconds;
+    trace.operational_offset = device.capabilities.operational_offset;
+    trace.ports = device.capabilities.ports;
+    trace.step = runtime_start_state(device.runtime, trace.state, trace.expiry);
+    trace.bridges = device.bridges;
+    trace.repaired = device.repaired;
+    trace.silenced = device.silenced;
+    RtlCopyMemory(trace.silenced_device, device.silenced_device, sizeof(trace.silenced_device));
+    trace.iommu = device.iommu;
+    trace.iommu_after = device.iommu_after;
+    for (ULONG i = 0; i < device.bridges && i < 4; ++i) {
+        trace.bridge[i] = device.bridge[i];
+        USHORT status{};
+        HalGetBusDataByOffset(PCIConfiguration, device.bridge[i] >> 24, device.bridge_slot[i],
+                              &status, 0x1e, sizeof(status));
+        trace.secondary[i] = status;
+    }
+    read_pci(const_cast<Device &>(device), 4, &trace.device_pci, sizeof(trace.device_pci));
+    if (const auto *counters = runtime_counters(device.runtime)) {
+        trace.interrupts = counters->interrupts;
+        trace.polled = counters->polled;
+        trace.polling = counters->polling;
+        trace.events = counters->events;
+    }
+    if (stage == StartStage::started) {
+        trace.registers = reinterpret_cast<ULONG_PTR>(device.registers.base);
+        trace.counters = reinterpret_cast<ULONG_PTR>(runtime_counters(device.runtime));
+    }
+    static const WCHAR digits[] = L"0123456789ABCDEF";
+    WCHAR name[5]{};
+    for (unsigned i = 0; i < 4; ++i) {
+        name[i] = digits[(device.identity.device >> (12 - 4 * i)) & 15];
+    }
+    write_trace(name, trace);
+}
+} // namespace
+void record_enumeration(ULONG where, NTSTATUS status, ULONG ids) noexcept {
+    const auto index = static_cast<ULONG>(InterlockedIncrement(&enumeration_log.count) - 1) %
+                       enumeration_notes;
+    enumeration_log.notes[index] = {where, static_cast<ULONG>(status), ids};
+}
+void record_attach() noexcept {
+    InterlockedIncrement(&attached);
+    record_summary();
+}
+void record_start_request(NTSTATUS lower) noexcept {
+    InterlockedIncrement(&start_requests);
+    if (!NT_SUCCESS(lower)) {
+        InterlockedIncrement(&lower_failures);
+        InterlockedExchange(&last_lower_failure, lower);
+    }
+    record_summary();
+}
 NTSTATUS start_device(Device &device, PCM_RESOURCE_LIST raw,
                       PCM_RESOURCE_LIST translated) noexcept {
     if (KeGetCurrentIrql() != PASSIVE_LEVEL || device.registers.base || device.runtime ||
@@ -218,12 +527,17 @@ NTSTATUS start_device(Device &device, PCM_RESOURCE_LIST raw,
     RegisterBar bar{};
     PHYSICAL_ADDRESS physical{};
     ULONG bytes{};
+    auto stage = StartStage::resources;
+    auto handoff = HandoffResult::invalid;
+    ULONG attempts{};
+    bool unretired{};
     if (!read_pci(device, 0, pci, sizeof(pci)) ||
         !decode_pci_snapshot(pci, sizeof(pci), device.identity, bar) ||
         !match_board_controller(device.identity) ||
         !assigned_resources(raw, translated, bar, physical, bytes, device.interrupt)) {
         status = STATUS_DEVICE_CONFIGURATION_ERROR;
     } else {
+        stage = StartStage::mapping;
         device.registers.base =
             static_cast<volatile UCHAR *>(MmMapIoSpace(physical, bytes, MmNonCached));
         device.registers.bytes = bytes;
@@ -232,11 +546,13 @@ NTSTATUS start_device(Device &device, PCM_RESOURCE_LIST raw,
         } else if (!read_capabilities(device.registers.reader(), device.capabilities) ||
                    !read_protocols(device.registers.reader(), device.capabilities,
                                    device.protocols)) {
+            stage = StartStage::capabilities;
             status = STATUS_DEVICE_CONFIGURATION_ERROR;
         } else {
+            stage = StartStage::handoff;
             const FirmwareAccess access{device.registers.reader(), firmware_write, firmware_wait};
-            if (acquire_firmware(access, device.protocols, device.firmware) !=
-                HandoffResult::complete) {
+            handoff = acquire_firmware(access, device.protocols, device.firmware);
+            if (handoff != HandoffResult::complete) {
                 status = STATUS_DEVICE_NOT_READY;
             } else {
                 DbgPrint("XHCI_NATIVE PCI=%04x:%04x version=%04x slots=%u ports=%u contexts=%u "
@@ -246,18 +562,58 @@ NTSTATUS start_device(Device &device, PCM_RESOURCE_LIST raw,
                          device.capabilities.ports, device.capabilities.context_bytes,
                          device.capabilities.scratchpad_buffers,
                          device.interrupt.u.Interrupt.Vector);
-                status = runtime_create(device.self, device.pdo, device.registers,
-                                        device.capabilities, device.interrupt, device.runtime);
-                if (NT_SUCCESS(status)) {
-                    status = master_enable(device) ? runtime_start(device.runtime)
-                                                   : STATUS_DEVICE_CONFIGURATION_ERROR;
+                // Firmware that booted from this controller may still act on
+                // it while the OS takes over. A start that times out is
+                // repeated on a fresh runtime after proven retirement.
+                quiesce_firmware_controllers();
+                silence_stale_interrupts(device);
+                prepare_bridge_path(device);
+                release_iommu(device);
+                USHORT stale = 0xf900;
+                device.bus.SetBusData(device.bus.Context, PCI_WHICHSPACE_CONFIG, &stale, 6,
+                                      sizeof(stale));
+                const bool master = master_enable(device);
+                for (;;) {
+                    ++attempts;
+                    stage = StartStage::runtime_create;
+                    status = runtime_create(device.self, device.pdo, device.registers,
+                                            device.capabilities, device.interrupt,
+                                            device.runtime);
+                    if (NT_SUCCESS(status)) {
+                        stage = StartStage::runtime_start;
+                        status = master ? runtime_start(device.runtime)
+                                        : STATUS_DEVICE_CONFIGURATION_ERROR;
+                    }
+                    if (NT_SUCCESS(status) || !master || attempts == start_attempts ||
+                        !device.runtime) {
+                        break;
+                    }
+                    record_start(device, stage, status, handoff, attempts);
+                    if (runtime_quiesce(device.runtime, false) != Retirement::stopped ||
+                        !runtime_destroy(device.runtime)) {
+                        unretired = true;
+                        break;
+                    }
+                    device.runtime = nullptr;
+                    firmware_wait(nullptr, 1000);
                 }
                 if (NT_SUCCESS(status)) {
+                    stage = StartStage::usb_start;
                     status = usb_start(device);
                 }
             }
         }
     }
+    if (NT_SUCCESS(status)) {
+        stage = StartStage::started;
+    }
+    if (unretired) {
+        // The failed attempt already recorded its state; its runtime could
+        // not be retired, so nothing may be released or retried.
+        quarantine_device(device);
+        return status;
+    }
+    record_start(device, stage, status, handoff, attempts);
     if (!NT_SUCCESS(status)) {
         stop_device(device, false);
     }

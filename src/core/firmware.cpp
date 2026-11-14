@@ -12,7 +12,7 @@ constexpr std::uint32_t bios_owned = 1u << 16, os_owned = 1u << 24;
 constexpr std::uint32_t control_preserved = (7u << 1) | (255u << 5) | (7u << 17);
 constexpr std::uint32_t smi_enables = (1u << 0) | (1u << 4) | (7u << 13);
 constexpr std::uint32_t smi_events = 7u << 29;
-constexpr std::uint32_t handoff_timeout_ms = 1000;
+constexpr std::uint32_t handoff_timeout_ms = 5000;
 bool read(const FirmwareAccess &access, std::uint32_t offset, std::uint32_t &value) noexcept {
     value = 0;
     return access.registers.read32 &&
@@ -49,7 +49,15 @@ HandoffResult acquire_firmware(const FirmwareAccess &access, const ProtocolMap &
             break;
         }
         if (snapshot.waited_milliseconds == handoff_timeout_ms) {
-            return HandoffResult::timeout;
+            // Firmware that never answers must not keep the controller, and a
+            // boot disk behind it, from the OS. Take ownership as the pinned
+            // Linux reference does, then disable its SMI sources below.
+            header &= ~bios_owned;
+            if (!access.write32(access.registers.context, offset, header)) {
+                return HandoffResult::inaccessible;
+            }
+            snapshot.forced = true;
+            break;
         }
         if (!access.wait_milliseconds(access.registers.context, 1)) {
             return HandoffResult::inaccessible;

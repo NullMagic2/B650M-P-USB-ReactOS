@@ -1,0 +1,26 @@
+--- a/drivers/hid/hidusb/hidusb.c
++++ b/drivers/hid/hidusb/hidusb.c
+@@ -10,6 +10,7 @@
+ 
+ #include "hidusb.h"
+ #include <cancellation.hpp>
++#include <report_limit.hpp>
+ 
+ PUSBD_PIPE_INFORMATION
+ HidUsb_GetInputInterruptInterfaceHandle(
+@@ -686,6 +687,15 @@
+     }
+ 
+     //
++    // the class parser cannot hold every descriptor; refuse instead of overrunning it
++    //
++    if (!HidUsbXhciReportDescriptorFits(Report, BufferLength))
++    {
++        ExFreePoolWithTag(Report, HIDUSB_TAG);
++        return STATUS_NOT_SUPPORTED;
++    }
++
++    //
+     // get current stack location
+     //
+     IoStack = IoGetCurrentIrpStackLocation(Irp);

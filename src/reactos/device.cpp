@@ -144,6 +144,7 @@ NTSTATUS NTAPI dispatch_pnp(PDEVICE_OBJECT object, PIRP irp) {
             break;
         }
         result = forward_wait(device, irp);
+        record_start_request(result);
         if (NT_SUCCESS(result)) {
             result = start_device(device, stack->Parameters.StartDevice.AllocatedResources,
                                   stack->Parameters.StartDevice.AllocatedResourcesTranslated);
@@ -327,6 +328,7 @@ NTSTATUS NTAPI add_device(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo) {
     if (!NT_SUCCESS(result)) {
         return result;
     }
+    record_attach();
     auto &device = extension(object);
     RtlZeroMemory(&device, sizeof(device));
     device.signature = controller_signature;

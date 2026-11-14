@@ -4,6 +4,10 @@ Module: xhci.reactos.root_hub
 Purpose: Protocol-specific logical root descriptors and real PORTSC class requests.
 Created: 2026-10-25
 Architecture: Logical ports map to validated Supported Protocol physical port IDs.
+A hub's status-change endpoint is level triggered: a port stays reported while
+any of its change bits is set. xHCI raises a port event only when the first
+change bit of a port becomes set, so this root re-reports a port itself after
+every acknowledgement or reset that leaves a change pending.
 */
 #include "usb.hpp"
 namespace xhci::native {
@@ -99,21 +103,34 @@ NTSTATUS usb_root_request(RootHub &root, const SetupPacket &setup, void *buffer,
         return status;
     }
     if (input && setup.request == USB_REQUEST_GET_STATUS) {
+        // Change bits this root's hub class cannot see or acknowledge would
+        // stay set and suppress every later port event. Retire them here.
+        const ULONG foreign = portsc & (root.index ? 1u << 18 : (1u << 19) | (1u << 23));
+        if (foreign) {
+            ULONG ignored = 0;
+            runtime_port(runtime, physical, ignored, 0, foreign, 0);
+            portsc &= ~foreign;
+        }
         USHORT response[2]{};
         port_status(root.index != 0, portsc, response[0], response[1]);
         if (!root.index && (portsc & 1)) {
-            UsbSpeed speed{};
-            auto &controller = *root.bus->controller;
-            if (!usb_resolve_speed(controller, physical, static_cast<UCHAR>((portsc >> 10) & 15),
-                                   speed)) {
-                return STATUS_DEVICE_PROTOCOL_ERROR;
-            }
             response[0] &= ~(0x200u | 0x400u);
-            if (speed == UsbSpeed::low) {
-                response[0] |= 0x200;
-            }
-            if (speed == UsbSpeed::high) {
-                response[0] |= 0x400;
+            // A USB2 port reports its speed only once reset has enabled it.
+            // Before that the field may read zero; the hub resets first and
+            // reads the speed afterwards, so an unknown speed is not an error.
+            const auto id = static_cast<UCHAR>((portsc >> 10) & 15);
+            if ((portsc & 2) && id) {
+                UsbSpeed speed{};
+                auto &controller = *root.bus->controller;
+                if (!usb_resolve_speed(controller, physical, id, speed)) {
+                    return STATUS_DEVICE_PROTOCOL_ERROR;
+                }
+                if (speed == UsbSpeed::low) {
+                    response[0] |= 0x200;
+                }
+                if (speed == UsbSpeed::high) {
+                    response[0] |= 0x400;
+                }
             }
         }
         if (!response[1]) {
@@ -215,6 +232,17 @@ NTSTATUS usb_root_request(RootHub &root, const SetupPacket &setup, void *buffer,
     if (!NT_SUCCESS(status)) {
         return status;
     }
+    if (clear_changes) {
+        // Another change may still be pending; no port event will announce it.
+        USHORT port_state{}, port_change{};
+        if (NT_SUCCESS(runtime_port(runtime, physical, portsc))) {
+            port_status(root.index != 0, portsc, port_state, port_change);
+            if (port_change) {
+                usb_port_notify(root.bus, physical);
+            }
+        }
+        return STATUS_SUCCESS;
+    }
     if (set_bits & (1u << 16)) {
         ULONG target = (set_bits >> 5) & 15;
         LARGE_INTEGER interval{};
@@ -252,6 +280,9 @@ NTSTATUS usb_root_request(RootHub &root, const SetupPacket &setup, void *buffer,
             return status;
         }
         if (!(portsc & ((1u << 4) | (1u << 31)))) {
+            // The reset change may not raise a port event when another change
+            // was already pending on this port; report the port regardless.
+            usb_port_notify(root.bus, physical);
             return (portsc & 3) == 3 ? STATUS_SUCCESS : STATUS_DEVICE_NOT_CONNECTED;
         }
         KeDelayExecutionThread(KernelMode, FALSE, &delay);

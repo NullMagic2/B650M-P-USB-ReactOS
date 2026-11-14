@@ -17,10 +17,11 @@ enum class HandoffResult { complete, invalid, inaccessible, timeout, smi_enabled
 struct FirmwareSnapshot {
     std::uint32_t initial_legacy{}, final_legacy{}, initial_control{}, final_control{};
     std::uint32_t waited_milliseconds{};
-    bool present{}, os_owned{};
+    bool present{}, os_owned{}, forced{};
 };
-// PASSIVE_LEVEL in native caller; at most 1000 one-millisecond sleeps. Never
-// forces the BIOS-owned bit clear or enables SMI. Timeout refuses activation.
+// PASSIVE_LEVEL in native caller; at most 5000 one-millisecond sleeps. After
+// that the BIOS-owned bit is cleared and the snapshot records it as forced.
+// Never enables SMI.
 HandoffResult acquire_firmware(const FirmwareAccess &, const ProtocolMap &,
                                FirmwareSnapshot &) noexcept;
 } // namespace xhci
