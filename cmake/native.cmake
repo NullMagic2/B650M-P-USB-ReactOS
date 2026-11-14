@@ -5,6 +5,7 @@
 option(XHCI_NATIVE_DIAGNOSTIC "Build the separate native read-only PCI diagnostic" OFF)
 option(XHCI_NATIVE_CONTROLLER "Build the native WDM controller implementation" OFF)
 option(XHCI_NATIVE_BOOT "Build the separate persistent USB boot admission bridge" OFF)
+option(XHCI_NATIVE_LOADER "Relink FreeLoader with the owned BIOS disk and memory components" OFF)
 option(XHCI_VIRTUAL_TEST_CONTROLLER "Emulator fixture: also admit the QEMU xHCI; never deliver" OFF)
 option(XHCI_TEST_FIRST_START_RESET "Emulator fixture: reset the controller under its first start; never deliver" OFF)
 option(XHCI_TEST_INTERRUPT_FLOOD "Emulator fixture: report a foreign interrupt flood; never deliver" OFF)
@@ -96,4 +97,30 @@ if(XHCI_NATIVE_DIAGNOSTIC OR XHCI_NATIVE_CONTROLLER OR XHCI_NATIVE_BOOT)
     if(XHCI_NATIVE_BOOT)
         xhci_native_module(xhci_native_boot xhci-boot-i386.sys src/reactos/boot.cpp)
     endif()
+endif()
+if(XHCI_NATIVE_LOADER)
+    # The unchanged FreeLoader objects come from the pinned loader component;
+    # only compat/reactos/freeldr and the diagnostic observer are compiled here.
+    set(loader_root "${XHCI_DEPENDENCIES_DIR}/reactos-i386-a97c8a2-v1/loader")
+    if(NOT EXISTS "${loader_root}/build/boot/freeldr/freeldr/frldr16.bin")
+        message(FATAL_ERROR "XHCI_NATIVE_LOADER needs the automatic loader dependencies; an external SDK does not provide them")
+    endif()
+    find_program(XHCI_LOADER_CXX i686-w64-mingw32-g++ REQUIRED)
+    find_program(XHCI_LOADER_CC i686-w64-mingw32-gcc REQUIRED)
+    set(XHCI_LOADER_BUILD "${loader_root}/build")
+    set(XHCI_LOADER_SOURCE "${loader_root}/source")
+    set(XHCI_LOADER_CONFIGURATION "${loader_root}/configuration")
+    set(loader_recipe "${CMAKE_CURRENT_BINARY_DIR}/loader/recipe.json")
+    configure_file("${PROJECT_SOURCE_DIR}/cmake/boot_loader_recipe.json.in" "${loader_recipe}" @ONLY)
+    set(loader "${CMAKE_CURRENT_BINARY_DIR}/native/freeldr.sys")
+    file(GLOB loader_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/compat/reactos/freeldr/*")
+    add_custom_command(OUTPUT "${loader}"
+        COMMAND "${CMAKE_COMMAND}" "-DXHCI_FREELDR_RECIPE=${loader_recipe}"
+            "-DXHCI_FREELDR_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/loader" -DXHCI_FREELDR_USB_PIC_HANDOFF=ON
+            -P "${PROJECT_SOURCE_DIR}/cmake/boot_loader_repair.cmake"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/native"
+        COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_CURRENT_BINARY_DIR}/loader/freeldr.sys" "${loader}"
+        DEPENDS ${loader_sources} "${PROJECT_SOURCE_DIR}/src/tools/boot_loader_diagnostics.cpp"
+            "${PROJECT_SOURCE_DIR}/cmake/boot_loader_repair.cmake" "${loader_recipe}" VERBATIM)
+    add_custom_target(xhci_native_loader DEPENDS "${loader}")
 endif()

@@ -2,7 +2,7 @@
   "schema": 1,
   "architecture": "i386",
   "sdk_revision": "a97c8a2cdcf6a9a7f5cc543951a02ccb7a80d8ca",
-  "download_base": "https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/download/v0.1.1",
+  "download_base": "https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/download/v0.2.0",
   "components": {
     "sdk": {
       "filename": "reactos-i386-sdk-a97c8a2-v1.tar.gz",
@@ -27,6 +27,14 @@
       "files": 5,
       "unpacked_bytes": 205170,
       "manifest_sha256": "af29ba9443ff01e22a2398f96d6883aa7916f3a65e56c62395d4aef8aa6682e1"
+    },
+    "loader": {
+      "filename": "reactos-i386-loader-a97c8a2-v1.tar.gz",
+      "sha256": "33b08c8f5f956ad8b88a0f947489c9efa3cc5aefab975baa4392cc3a5322102e",
+      "bytes": 904063,
+      "files": 161,
+      "unpacked_bytes": 4543502,
+      "manifest_sha256": "51062cca9032f0d93eb39371992cf7dad8a98f6de0b925701a9826345e001eb8"
     }
   }
 }

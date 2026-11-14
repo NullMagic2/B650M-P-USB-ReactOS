@@ -22,9 +22,9 @@ On 2026-11-14 the board booted ReactOS to the desktop from a USB stick through t
 - **`xhci.sys`**: the firmware leaves the AMD IOMMU translating and its own USB stack running. The driver releases the IOMMU, halts firmware-owned controllers, takes ownership when the BIOS handoff goes unanswered, and polls when the shared interrupt line is unusable. Root-hub handling was corrected for the `1022:43F7` controller.
 - **`xhciboot.sys` and `hidusb.sys`**: the boot bridge admits removable boot media and shows a red on-screen report when a start or assertion fails. HIDUSB refuses the board's MYSTIC LIGHT report descriptor, which the ReactOS HID parser cannot hold.
 
-The v0.1.1 installer predates these changes; build from source as described in [GETTING_STARTED.txt](GETTING_STARTED.txt). The sequence of failures and fixes is in [evidence/physical-usb-root-boot.txt](evidence/physical-usb-root-boot.txt).
+Release v0.2.0 carries these changes in two downloads. The installer updates `xhci.sys` and the four class drivers of an installed system. `B650M-P-USB-ReactOS-boot-files-i386.zip` holds the exact loader, boot bridge and drivers that booted the board, for updating a prepared USB system from another operating system; its READ-ME lists where each file goes. Installing or rolling back with the v0.2.0 installer was not exercised in ReactOS. The sequence of failures and fixes is in [evidence/physical-usb-root-boot.txt](evidence/physical-usb-root-boot.txt).
 
-Still open: assigning `C:` to the USB system volume when an internal disk is present is fixed in the emulator but not yet confirmed on the board; `1022:43F7` appears to run in polling mode; MYSTIC LIGHT lighting control does not work; and rebuilding FreeLoader needs a matching loader SDK that the automatic dependency download does not yet provide.
+Still open: ReactOS sees 1 GiB of RAM; `1022:43F7` appears to run in polling mode; MYSTIC LIGHT lighting control does not work; a keyboard was sometimes absent in Linux after a ReactOS session until replugged, cause unknown; and only one board and one USB stick were tested.
 
 Build instructions are in [GETTING_STARTED.txt](GETTING_STARTED.txt); installation and recovery options are in [packaging/INSTALL.txt](packaging/INSTALL.txt). Run the installer with `--extract` to export its verified runtime payloads. No source archive or full ReactOS tree is embedded in the installer.
 
@@ -35,6 +35,6 @@ cmake -S . -B Binaries/.build/native -DXHCI_NATIVE_CONTROLLER=ON
 cmake --build Binaries/.build/native --target xhci_native_controller -j4
 ```
 
-The build automatically downloads the matching headers and kernel/HAL import libraries into **`dependencies/`** (about 501 KiB compressed). Only enabled optional components download extra inputs. Versions and checksums are pinned in `dependencies.lock.json`; cached files are verified and reused. A full ReactOS checkout is unnecessary for these driver targets. See `GETTING_STARTED.txt` for the Linux/MinGW prerequisites and optional class-module build.
+The build automatically downloads the matching headers and kernel/HAL import libraries into **`dependencies/`** (about 501 KiB compressed). Only enabled optional components download extra inputs; `-DXHCI_NATIVE_LOADER=ON` fetches the FreeLoader inputs (about 883 KiB) and builds the `xhci_native_loader` target. Versions and checksums are pinned in `dependencies.lock.json`; cached files are verified and reused. A full ReactOS checkout is unnecessary for these driver targets. See `GETTING_STARTED.txt` for the Linux/MinGW prerequisites and optional class-module build.
 
 The controller is **GPL-2.0-only**. The shared installer and ReactOS patches preserve their upstream GPL terms; the separate disk compatibility module uses MS-PL. See [LICENSE](LICENSE), [THIRD_PARTY.txt](THIRD_PARTY.txt), and the per-module notices.

@@ -196,3 +196,16 @@ Physical USB-root boot (2026-11-14)
   silencing use only the xHCI 1.2 and PCI 3.0 register definitions.
 - The assertion report in src/reactos/boot.cpp redirects the kernel RtlAssert
   export at run time and copies no kernel source.
+
+FreeLoader dependency component (2026-11-14)
+- reactos-i386-loader-a97c8a2-v1.tar.gz, fetched only for XHCI_NATIVE_LOADER,
+  contains unchanged ReactOS a97c8a2 FreeLoader build outputs (four objects,
+  libfreeldr_common, cportlib, libcntpr, blrtl, mini_hal, freeldr.def and
+  frldr16.bin), freeldr_gcc.lds and the 149 ReactOS headers that the owned
+  components in compat/reactos/freeldr include. They keep their upstream
+  GPL-2.0-or-later and LGPL notices; source is the public ReactOS repository
+  at that revision. Per-file hashes are in the component's manifest and the
+  archive hash is pinned in dependencies.lock.json. No whole ReactOS tree is
+  included.
+- The released freeldr.sys links those unchanged inputs with the owned
+  components listed above.

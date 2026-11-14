@@ -62,25 +62,34 @@ Observed on that desktop
   an internal disk had taken C: and the USB system volume another letter.
   Change: the boot bridge creates the system volume's C: mount point through
   the mount manager. Checked in the emulator with a second fixed disk.
-  NOT yet checked on the board.
+
+Board session after that change, 2026-11-14 15:37 to 15:42
+  Read afterwards from the stick, not photographed: the saved SYSTEM hive's
+  MountedDevices has \DosDevices\C: = MBR signature 58484349, offset 1 MiB
+  (the USB system volume) and D: and E: on the two internal GPT disks.
+  The user reported the session as tested and ran a setup program from the
+  desktop; its window opened and it wrote under C:\ReactOS\System32\drivers.
+  Explorer windows were not separately photographed.
 
 Not established
-  - Board confirmation of the C: assignment.
   - Interrupt-driven operation of 1022:43F7; its counters (poll=228,
     unclaimed=8918 in one report) suggest timer polling on shared IRQ 5.
   - Storage write durability, unplug/reconnect and restart from the board's
     own USB-root session.
   - More than 1 GiB of RAM under ReactOS.
   - MYSTIC LIGHT lighting control.
-  - A FreeLoader rebuild from the pinned dependency bundle alone;
-    cmake/boot_loader_repair.cmake needs a saved loader SDK and build recipe.
+  - Installing, resuming or rolling back with the v0.2.0 installer in ReactOS.
+  - Any board or USB stick other than the one described here.
   - Keyboard 2a7a:959f was sometimes absent in Linux after a ReactOS attempt
     until replugged. The cause is not identified.
 
 Checks run for this change set
   Host: seven ASan/UBSan suites (ctest), LeakSanitizer disabled.
-  Native: xhci_native_controller, xhci_native_boot and
-  xhci_native_usb_compatibility build with i686-w64-mingw32 GCC 13.
+  Native: xhci_native_controller, xhci_native_boot,
+  xhci_native_usb_compatibility and xhci_native_loader build with
+  i686-w64-mingw32 GCC 13 from the pinned dependency components. The rebuilt
+  loader differs from the board-tested freeldr.sys in eight bytes (PE
+  timestamps and checksum).
   Emulator: default, no-interrupt, first-start-reset, interrupt-flood,
   assertion, class-lock-refused and HID-limit fixtures boot to the desktop or
   to their expected report.

@@ -65,11 +65,18 @@ Booting the board from a USB stick
 
   The stick also needs the patched FreeLoader (compat/reactos/freeldr). Without
   its 1 GiB memory bound the stock loader cannot read the disk on machines with
-  free RAM above 4 GiB. It is relinked against a saved ReactOS loader build:
-    cmake -DXHCI_FREELDR_RECIPE=<build-recipe.json> -DXHCI_FREELDR_OUTPUT=<dir> \
-      -DXHCI_FREELDR_USB_PIC_HANDOFF=ON -P cmake/boot_loader_repair.cmake
-  The recipe lists the loader's compile and link commands and its SDK directory.
-  That SDK is not yet part of the pinned dependency bundle.
+  free RAM above 4 GiB. Build it with:
+    cmake -S . -B Binaries/.build/loader -DXHCI_NATIVE_LOADER=ON -DXHCI_TESTS=OFF
+    cmake --build Binaries/.build/loader --target xhci_native_loader
+  Output: Binaries/.build/loader/native/freeldr.sys, for the root of the stick.
+  Configuration downloads the pinned loader component (about883KiB): the
+  unchanged ReactOS FreeLoader objects and libraries, its linker script and the
+  headers the owned components include. Only compat/reactos/freeldr and the
+  diagnostic observer are compiled; the result differs from the board-tested
+  loader in its PE timestamps and checksum only.
+
+  Release v0.2.0 also provides these files prebuilt, as the installer and as
+  B650M-P-USB-ReactOS-boot-files-i386.zip.
 
   Use the normal boot entry. /DEBUGPORT=SCREEN stalls on this board. A failed
   start or assertion is reported on a red screen by xhciboot.sys instead.

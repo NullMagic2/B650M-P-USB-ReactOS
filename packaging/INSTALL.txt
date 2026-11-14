@@ -58,6 +58,13 @@ Use a trusted guest and publisher. Hashes identify bytes, not the publisher.
 Successful installation, source completion and emulator operation do not qualify
 physical AMD-controller operation, motherboard interrupt routing or USB durability.
 
+The v0.2.0 controller and HIDUSB modules are the bytes that booted the board
+from USB to the desktop on 2026-11-14. That boot also needs the patched
+FreeLoader and the boot bridge, which this installer does not carry; they are in
+the release's boot-files archive. Installing, resuming or rolling back with this
+installer build was not exercised in ReactOS. See
+evidence/physical-usb-root-boot.txt in the repository.
+
 Source rebuild
   Driver/installer source, compatibility patches and pinned upstream input hashes
   are at https://github.com/NullMagic2/B650M-P-USB-ReactOS.
@@ -69,7 +76,9 @@ Source rebuild
   copied into the project source archive or the installer.
   Configure XHCI_SHARED_PACKAGES to the checkout's guest-packages directory.
   XHCI_NATIVE_CONTROLLER, XHCI_NATIVE_BOOT and XHCI_NATIVE_USB_COMPATIBILITY build
-  real native modules. XHCI_BUILD_PACKAGE_BACKEND builds the shared i386 GUI.
+  real native modules. XHCI_NATIVE_LOADER relinks the patched FreeLoader from its
+  own pinned dependency component. XHCI_BUILD_PACKAGE_BACKEND builds the shared
+  i386 GUI.
   The provider stages a project-source archive separately from the selected
   runtime catalog payloads. The unchanged planner bundles only selected files.
   GCC/MinGW verification is separate from the unperformed MSVC build.
