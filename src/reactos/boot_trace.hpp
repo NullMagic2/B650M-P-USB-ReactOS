@@ -38,6 +38,17 @@ struct RuntimeCounters {
     volatile LONG stray;
     ULONG stray_event[4];
 };
+// Saved copy of one controller's counters. The boot bridge writes these to
+// HKLM\SYSTEM\CurrentControlSet\Services\XhciBoot\LastRun, which outlives the
+// session, so service mode and interrupt delivery can be read afterwards.
+inline constexpr wchar_t last_run_key[] =
+    L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services\\XhciBoot\\LastRun";
+struct SavedCounters {
+    ULONG identity, vector, level, stage;
+    LONG interrupts, polled, polling, events, unclaimed, flooded, fault_site, stray;
+    // Clock tick in 100 ns units and seconds since boot when saved.
+    ULONG tick, seconds;
+};
 // One hub-requested enumeration step. Kept in a fixed ring for display only.
 struct EnumerationNote {
     // controller PCI device id << 16 | root index << 12 | phase << 8 | port.

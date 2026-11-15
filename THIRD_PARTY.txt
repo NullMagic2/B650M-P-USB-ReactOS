@@ -209,3 +209,9 @@ FreeLoader dependency component (2026-11-14)
   included.
 - The released freeldr.sys links those unchanged inputs with the owned
   components listed above.
+
+USB storage command size (2026-11-14)
+- compat/reactos/usbstor-transfer-length.patch changes one definition in ReactOS
+  drivers/usb/usbstor/usbstor.h (USBSTOR_DEFAULT_MAX_TRANSFER_LENGTH, 64 KiB to
+  1 MiB) and keeps that file's upstream GPL-2.0-or-later terms. No other
+  upstream source is copied.

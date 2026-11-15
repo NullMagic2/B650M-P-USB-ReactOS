@@ -21,7 +21,16 @@ struct DmaBuffer {
     void *address{};
     ULONGLONG logical{};
     ULONG bytes{};
+    // Usable bytes at address; bytes may be less when a cached buffer is reused.
+    ULONG capacity{};
 };
+// Transfer data buffers kept for reuse. A contiguous allocation per transfer
+// costs more than a small transfer itself.
+inline constexpr ULONG transfer_cache_entries = 10;
+// Buffers for transfers above 64 KiB. They are allocated once at full size and
+// kept, so a large transfer waits for one instead of depending on a megabyte
+// of contiguous memory being available late in a session.
+inline constexpr ULONG large_buffers = 2;
 struct Ring {
     DmaBuffer memory;
     ProducerRing producer;
@@ -82,7 +91,16 @@ struct Runtime {
     // counters.polling: the assigned interrupt line never delivered events, so
     // the timer services the event ring and the interrupter stays masked.
     RuntimeCounters counters{};
-    LONG timer_batches{};
+    // timer_batches counts consecutive timer-found batches with no claimed
+    // interrupt in between; batch_claimed is the claimed count at the last one.
+    LONG timer_batches{}, batch_claimed{};
+    // Guarded by lock. Empty entries have no allocation.
+    DmaBuffer transfer_cache[transfer_cache_entries]{};
+    DmaBuffer large_pool[large_buffers]{};
+    bool large_busy[large_buffers]{};
+    KEVENT large_free;
+    // Interrupt time after which timer service asks for the fast clock again.
+    ULONGLONG clock_renewal{};
     // Unclaimed-interrupt flood detection; see timeout_dpc.
     LONG flood_baseline{}, flood_claimed{};
     volatile LONG flood_relief{};
@@ -119,6 +137,11 @@ inline void note_stray(Runtime &runtime, const Trb &event) noexcept {
 NTSTATUS dma_allocate(Runtime &runtime, DmaBuffer &buffer, ULONG bytes, ULONG alignment,
                       ULONG boundary = 0) noexcept;
 void dma_free(Runtime &runtime, DmaBuffer &buffer) noexcept;
+// PASSIVE_LEVEL. Data buffer for one transfer, reused across transfers. Its
+// contents are not cleared: callers copy in what they send and copy out only
+// the bytes the controller reports as received.
+NTSTATUS transfer_buffer_acquire(Runtime &runtime, DmaBuffer &buffer, ULONG bytes) noexcept;
+void transfer_buffer_release(Runtime &runtime, DmaBuffer &buffer) noexcept;
 void free_slot(Runtime &runtime, UCHAR slot) noexcept;
 void free_buffers(Runtime &runtime) noexcept;
 void publish_trb(volatile Trb *target, const Trb &trb, bool cycle) noexcept;
@@ -135,4 +158,9 @@ NTSTATUS connect_interrupt(Runtime &runtime) noexcept;
 void disconnect_interrupt(Runtime &runtime) noexcept;
 bool join_callbacks(Runtime &runtime) noexcept;
 void arm_timeout(Runtime &runtime) noexcept;
+// Any IRQL up to DISPATCH_LEVEL. Asks once per boot for a 1 ms clock, so a
+// controller serviced from the timer is not limited to one event per ~10 ms tick.
+void request_fast_clock() noexcept;
+// Up to DISPATCH_LEVEL. Services the event ring now, as the timer would.
+void poll_events(Runtime &runtime) noexcept;
 } // namespace xhci::native

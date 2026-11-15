@@ -1,0 +1,60 @@
+USB throughput, 2026-11-14
+
+Report
+  After release v0.2.0 ReactOS on the MSI PRO B650M-P felt extremely slow from
+  the USB stick (stick on 1022:43F7, SuperSpeed). Nothing was measured on the
+  board. Every figure here is from a QEMU/KVM guest with the emulated xHCI and
+  a usb-storage disk on a RAM-backed image, 48 MiB unbuffered reads of one file
+  (tests/m11/disk_speed.cpp). The figures compare driver builds, not devices.
+
+Causes found in the driver
+  1. DMA common buffers were requested with CacheEnabled=FALSE. ReactOS then
+     maps them uncached, so every data copy ran at a few tens of MB/s.
+  2. One contiguous buffer was allocated and freed per transfer.
+  3. Interrupt moderation was 1 ms per event; a storage command is three
+     dependent transfers.
+  4. Timer service was latched after any three event batches that the 100 ms
+     timer happened to find, even while interrupts worked. On hardware the
+     timer can find events inside the moderation interval. Once latched, each
+     event waited for a clock tick (15 ms on this HAL).
+  5. USBSTOR limits a command to 64 KiB.
+  6. ReactOS restores the default clock rate when any program ends its own
+     timer period, so one request for a 1 ms clock does not last.
+
+Changes
+  src/reactos/dma.cpp            cached common buffers; reusable 4 KiB and
+                                 64 KiB transfer buffers; a pool of two 1 MiB
+                                 buffers that large transfers wait for
+  src/hardware/runtime_controller.cpp   moderation 40 microseconds
+  src/reactos/interrupts.cpp     latch only after three timer-found batches
+                                 with no claimed interrupt between them; fast
+                                 clock requested and renewed every 2 s while
+                                 polling; fixture XHCI_TEST_TIMER_RACE
+  src/reactos/transfers.cpp      while polling, a bulk or control transfer
+                                 looks for its completion for about 2 ms
+                                 before sleeping
+  src/reactos/boot.cpp           saves each controller's counters to
+                                 Services\XhciBoot\LastRun at 30 s, 90 s and
+                                 every 5 minutes (SavedCounters, boot_trace.hpp)
+  compat/reactos/usbstor-transfer-length.patch   1 MiB per command
+
+Emulator results     64 KiB sequential      random 4 KiB
+  v0.2.0, interrupts          28 MB/s        2700 reads/s
+  v0.2.0, forced polling       1 MB/s          22 reads/s
+  new, interrupts            267 MB/s        4400 reads/s
+  new, forced polling        246 MB/s        4600 reads/s
+  With 1 MiB commands, 48 MiB was read within one 15 ms timer tick in
+  interrupt mode (too fast for this tool to time) and at 229 MB/s when polling.
+  A sampled checksum of the data matched for 1 MiB and 64 KiB reads. A 32 MiB
+  file written in 1 MiB writes read back identical on the host. Both modes.
+  XHCI_TEST_TIMER_RACE: 13404 batches attributed to the timer with 53617
+  claimed interrupts; timer service stayed off.
+  Seven host suites pass.
+
+Not established
+  - Any figure on the board, and whether 1022:43F7 was in timer service there.
+    That is inferred from an earlier on-screen report (poll=228) and the code.
+    The saved counters will show it after a session with these modules.
+  - 1 MiB commands and transfer descriptors of up to 17 TRBs on real
+    controllers.
+  - UAS and streams are not implemented; storage uses bulk-only transport.

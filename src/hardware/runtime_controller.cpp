@@ -87,7 +87,9 @@ NTSTATUS hardware_start(Runtime &runtime) noexcept {
         runtime.registers.write32(ir + 8, 1) &&
         runtime.registers.write64(ir + 0x10, runtime.erst.logical) &&
         runtime.registers.write64(ir + 0x18, runtime.events.logical | 8) &&
-        runtime.registers.write32(ir + 4, 4000) && runtime.registers.write32(ir, 3) &&
+        // 40 microsecond moderation. A storage command is three dependent
+        // transfers; a 1 ms interval would add up to 3 ms to every one.
+        runtime.registers.write32(ir + 4, 160) && runtime.registers.write32(ir, 3) &&
         runtime.registers.write32(op + 4, (1u << 3) | (1u << 4)) &&
         runtime.registers.write32(op, 13);
     runtime.stopped = false;

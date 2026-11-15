@@ -224,14 +224,14 @@ NTSTATUS runtime_transfer(Runtime *runtime, UCHAR slot, UCHAR endpoint, USHORT p
     NTSTATUS status = STATUS_DEVICE_NOT_READY;
     if (!runtime->closing && !runtime->gone && !runtime->fault && runtime->running &&
         owner.enabled && owner.endpoints[endpoint].memory.address && !owner.transfers[endpoint]) {
-        status = dma_allocate(*runtime, transfer->memory, length ? length : 1, 64);
+        status = transfer_buffer_acquire(*runtime, transfer->memory, length ? length : 1);
     }
     if (NT_SUCCESS(status) && !build_transfer(transfer->memory.logical, length, packet, input,
                                               setup, transfer->descriptor)) {
         status = STATUS_INVALID_PARAMETER;
     }
     if (!NT_SUCCESS(status)) {
-        dma_free(*runtime, transfer->memory);
+        transfer_buffer_release(*runtime, transfer->memory);
         KeReleaseMutex(&runtime->lifecycle, FALSE);
         ExFreePoolWithTag(transfer, runtime_tag);
         return status;
@@ -260,7 +260,7 @@ NTSTATUS runtime_transfer(Runtime *runtime, UCHAR slot, UCHAR endpoint, USHORT p
     KeReleaseSpinLock(&runtime->lock, irql);
     KeReleaseMutex(&runtime->lifecycle, FALSE);
     if (!transfer->caller) {
-        dma_free(*runtime, transfer->memory);
+        transfer_buffer_release(*runtime, transfer->memory);
         ExFreePoolWithTag(transfer, runtime_tag);
         return status;
     }
@@ -268,6 +268,16 @@ NTSTATUS runtime_transfer(Runtime *runtime, UCHAR slot, UCHAR endpoint, USHORT p
     LARGE_INTEGER poll{};
     poll.QuadPart = -100000;
     bool abort_requested = false;
+    // Timer service delivers a completion only at the next clock tick. A bulk
+    // or control transfer usually completes within a fraction of that, so look
+    // for it directly for up to about 2 ms before sleeping. Periodic transfers
+    // (wait_forever) may stay outstanding indefinitely and always sleep.
+    if (!wait_forever && InterlockedCompareExchange(&runtime->counters.polling, 0, 0)) {
+        for (ULONG attempt = 0; attempt < 100 && !KeReadStateEvent(&transfer->event); ++attempt) {
+            KeStallExecutionProcessor(20);
+            poll_events(*runtime);
+        }
+    }
     while (KeWaitForSingleObject(&transfer->event, Executive, KernelMode, FALSE, &poll) ==
            STATUS_TIMEOUT) {
         if (runtime->fault) {
@@ -318,7 +328,7 @@ NTSTATUS runtime_transfer(Runtime *runtime, UCHAR slot, UCHAR endpoint, USHORT p
         if (input && transfer->bytes <= length && transfer->bytes) {
             RtlCopyMemory(buffer, transfer->memory.address, transfer->bytes);
         }
-        dma_free(*runtime, transfer->memory);
+        transfer_buffer_release(*runtime, transfer->memory);
         ExFreePoolWithTag(transfer, runtime_tag);
     } else {
         status = STATUS_DEVICE_NOT_CONNECTED;

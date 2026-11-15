@@ -8,6 +8,12 @@ Architecture: ISR never allocates; PASSIVE worker retires hardware before reuse.
 #include "runtime_internal.hpp"
 namespace xhci::native {
 namespace {
+WORK_QUEUE_ITEM clock_item;
+volatile LONG clock_busy;
+VOID NTAPI raise_clock_rate(PVOID) {
+    ExSetTimerResolution(10000, TRUE);
+    InterlockedExchange(&clock_busy, 0);
+}
 // timer_origin marks service requested by the periodic timer, not the ISR.
 void queue_event(Runtime &runtime, bool timer_origin = false) noexcept {
     // Reserve lifetime before the kernel can dispatch the callback, including
@@ -99,6 +105,14 @@ void NTAPI event_dpc(PKDPC, PVOID context, PVOID timer_origin, PVOID) {
     KeAcquireSpinLock(&runtime.lock, &old_irql);
     Trb event{};
     ULONG drained = 0;
+    bool by_timer = timer_origin != nullptr;
+#ifdef XHCI_TEST_TIMER_RACE
+    // Emulator fixture: account every fourth interrupt-driven batch as if the
+    // timer had found it first, as happens on hardware when the timer runs
+    // inside the interrupt moderation interval.
+    static LONG raced;
+    by_timer = by_timer || (InterlockedIncrement(&raced) & 3) == 0;
+#endif
     while (drained < 64 && take_event(runtime, event)) {
         ++drained;
         InterlockedIncrement(&runtime.counters.events);
@@ -141,12 +155,21 @@ void NTAPI event_dpc(PKDPC, PVOID context, PVOID timer_origin, PVOID) {
         // Preserve a newly pending IP: only ISR acknowledges it. Clearing IP
         // here could erase an event arriving between the empty poll and ERDP.
         // Events that only the timer finds were never signalled on the
-        // assigned line. After three such batches stop relying on it: keep
-        // the interrupter masked so an unrouted level line is never asserted.
-        if (timer_origin && drained) {
+        // assigned line. The timer can also win a race against a working
+        // line (it runs inside the moderation interval), so only batches with
+        // no claimed interrupt between them count. After three in a row stop
+        // relying on the line: keep the interrupter masked so an unrouted
+        // level line is never asserted.
+        if (by_timer && drained) {
             InterlockedIncrement(&runtime.counters.polled);
-            if (++runtime.timer_batches >= 3) {
-                InterlockedExchange(&runtime.counters.polling, 1);
+            const LONG claimed = runtime.counters.interrupts;
+            if (claimed != runtime.batch_claimed) {
+                runtime.batch_claimed = claimed;
+                runtime.timer_batches = 0;
+            }
+            if (++runtime.timer_batches >= 3 &&
+                !InterlockedExchange(&runtime.counters.polling, 1)) {
+                request_fast_clock();
             }
         }
         const bool polling = InterlockedCompareExchange(&runtime.counters.polling, 0, 0) != 0;
@@ -206,6 +229,13 @@ void NTAPI timeout_dpc(PKDPC, PVOID context, PVOID, PVOID) {
     runtime.flood_baseline = unclaimed;
     runtime.flood_claimed = claimed;
     const auto now = KeQueryInterruptTime();
+    // ReactOS restores the default clock rate when an unrelated program ends
+    // its own timer period, so the request is renewed every two seconds
+    // while this controller depends on the timer.
+    if (runtime.counters.polling && now >= runtime.clock_renewal) {
+        runtime.clock_renewal = now + 20000000;
+        request_fast_clock();
+    }
     bool expired = false;
     ULONG hardware_status = 0;
     if (runtime.gone ||
@@ -255,6 +285,7 @@ void NTAPI recovery_worker(PDEVICE_OBJECT, PVOID context) {
         // this controller from now on. Nothing else about the runtime changes.
         InterlockedExchange(&runtime.counters.polling, 1);
         InterlockedExchange(&runtime.counters.flooded, 1);
+        request_fast_clock();
         disconnect_interrupt(runtime);
         KeReleaseMutex(&runtime.lifecycle, FALSE);
         InterlockedExchange(&runtime.worker_queued, 0);
@@ -369,6 +400,15 @@ void complete_all(Runtime &runtime, NTSTATUS status) noexcept {
                 KeSetEvent(&transfer->event, IO_NO_INCREMENT, FALSE);
             }
         }
+    }
+}
+void poll_events(Runtime &runtime) noexcept {
+    queue_event(runtime, true);
+}
+void request_fast_clock() noexcept {
+    if (!InterlockedExchange(&clock_busy, 1)) {
+        ExInitializeWorkItem(&clock_item, raise_clock_rate, nullptr);
+        ExQueueWorkItem(&clock_item, DelayedWorkQueue);
     }
 }
 void arm_timeout(Runtime &runtime) noexcept {

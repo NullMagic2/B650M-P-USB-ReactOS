@@ -362,6 +362,89 @@ bool readable(ULONG_PTR address, ULONG bytes) noexcept {
            MmIsAddressValid(reinterpret_cast<PVOID>(address)) &&
            MmIsAddressValid(reinterpret_cast<PVOID>(address + bytes - 1));
 }
+// PASSIVE_LEVEL. Copies each started controller's live counters to the
+// non-volatile LastRun key.
+void save_counters() noexcept {
+    UNICODE_STRING source_path, target_path;
+    RtlInitUnicodeString(&source_path, xhci::native::boot_trace_key);
+    RtlInitUnicodeString(&target_path, xhci::native::last_run_key);
+    OBJECT_ATTRIBUTES source_attributes, target_attributes;
+    InitializeObjectAttributes(&source_attributes, &source_path,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
+    InitializeObjectAttributes(&target_attributes, &target_path,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
+    HANDLE source{}, target{};
+    if (!NT_SUCCESS(ZwOpenKey(&source, KEY_QUERY_VALUE, &source_attributes))) {
+        return;
+    }
+    if (!NT_SUCCESS(ZwCreateKey(&target, KEY_SET_VALUE, &target_attributes, 0, nullptr,
+                                REG_OPTION_NON_VOLATILE, nullptr))) {
+        ZwClose(source);
+        return;
+    }
+    for (ULONG index = 0; index < 8; ++index) {
+        alignas(8) UCHAR bytes[FIELD_OFFSET(KEY_VALUE_FULL_INFORMATION, Name) + 64 +
+                               sizeof(BootTrace)]{};
+        ULONG required{};
+        auto *info = reinterpret_cast<PKEY_VALUE_FULL_INFORMATION>(bytes);
+        if (!NT_SUCCESS(ZwEnumerateValueKey(source, index, KeyValueFullInformation, info,
+                                            sizeof(bytes), &required))) {
+            break;
+        }
+        if (info->Type != REG_BINARY || info->DataLength != sizeof(BootTrace) ||
+            info->DataOffset > sizeof(bytes) - sizeof(BootTrace) || info->NameLength > 64) {
+            continue;
+        }
+        BootTrace trace;
+        RtlCopyMemory(&trace, bytes + info->DataOffset, sizeof(trace));
+        if (!trace.identity) {
+            continue;
+        }
+        xhci::native::SavedCounters saved{};
+        saved.identity = trace.identity;
+        saved.vector = trace.vector;
+        saved.level = trace.level;
+        saved.stage = trace.stage;
+        saved.interrupts = trace.interrupts;
+        saved.polled = trace.polled;
+        saved.polling = trace.polling;
+        saved.events = trace.events;
+        if (trace.stage == static_cast<ULONG>(StartStage::started) && trace.counters &&
+            readable(trace.counters, sizeof(xhci::native::RuntimeCounters))) {
+            const auto *live =
+                reinterpret_cast<const xhci::native::RuntimeCounters *>(trace.counters);
+            saved.interrupts = live->interrupts;
+            saved.polled = live->polled;
+            saved.polling = live->polling;
+            saved.events = live->events;
+            saved.unclaimed = live->unclaimed;
+            saved.flooded = live->flooded;
+            saved.fault_site = live->fault_site;
+            saved.stray = live->stray;
+        }
+        saved.tick = KeQueryTimeIncrement();
+        // No 64-bit division in this module: 2^10 * 100 ns units first.
+        saved.seconds = static_cast<ULONG>(KeQueryInterruptTime() >> 10) / 9766;
+        WCHAR name_text[33]{};
+        RtlCopyMemory(name_text, info->Name, info->NameLength);
+        UNICODE_STRING name;
+        RtlInitUnicodeString(&name, name_text);
+        ZwSetValueKey(target, &name, 0, REG_BINARY, &saved, sizeof(saved));
+    }
+    ZwClose(target);
+    ZwClose(source);
+}
+// Saves the counters after 30 s, 90 s and then every five minutes, so a later
+// look at the system disk shows how each controller was being serviced.
+VOID NTAPI counters_thread(PVOID) {
+    const LONGLONG seconds[] = {30, 60};
+    for (ULONG round = 0;; ++round) {
+        LARGE_INTEGER delay{};
+        delay.QuadPart = -10000000LL * (round < 2 ? seconds[round] : 300);
+        KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        save_counters();
+    }
+}
 // Nearest PE image at or below the address that actually spans it.
 ULONG_PTR image_base(ULONG_PTR address, ULONG &stamp) noexcept {
     stamp = 0;
@@ -796,6 +879,11 @@ extern "C" NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING pat
     }
     redirect_assertions();
     reserve_system_letter(*expected);
+    HANDLE thread{};
+    if (NT_SUCCESS(PsCreateSystemThread(&thread, THREAD_ALL_ACCESS, nullptr, nullptr, nullptr,
+                                        counters_thread, nullptr))) {
+        ZwClose(thread);
+    }
     // ReactOS calls this after all boot drivers are initialized and before
     // IopCreateArcNames matches actual loader disk signatures to NT disk devices.
     IoRegisterBootDriverReinitialization(driver, reinitialize, expected);

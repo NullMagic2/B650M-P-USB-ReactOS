@@ -52,7 +52,7 @@ foreach(manifest m07-usbstor-patch-inputs.json m08-usbhub-patch-inputs.json m07-
     endforeach()
 endforeach()
 foreach(patch usbstor-transport.patch usbhub-superspeed.patch disk-shutdown.patch boot-usage.patch hidusb-cancellation.patch
-    hidusb-report-limit.patch)
+    hidusb-report-limit.patch usbstor-transfer-length.patch)
     execute_process(COMMAND "${patch_tool}" -p1 --batch --forward
         WORKING_DIRECTORY "${stage}" INPUT_FILE "${XHCI_COMPAT_ROOT}/compat/reactos/${patch}"
         OUTPUT_VARIABLE patch_output ERROR_VARIABLE patch_error RESULT_VARIABLE result)

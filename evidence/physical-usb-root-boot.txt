@@ -71,6 +71,10 @@ Board session after that change, 2026-11-14 15:37 to 15:42
   desktop; its window opened and it wrote under C:\ReactOS\System32\drivers.
   Explorer windows were not separately photographed.
 
+Reported after release v0.2.0
+  The system felt extremely slow from the USB stick. Causes found in the
+  driver and the changes made are in evidence/usb-throughput.txt.
+
 Not established
   - Interrupt-driven operation of 1022:43F7; its counters (poll=228,
     unclaimed=8918 in one report) suggest timer polling on shared IRQ 5.

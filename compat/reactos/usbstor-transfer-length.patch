@@ -1,0 +1,13 @@
+--- a/drivers/usb/usbstor/usbstor.h
++++ b/drivers/usb/usbstor/usbstor.h
+@@ -60,7 +60,9 @@
+ 
+ #define USB_MAXCHILDREN 16
+ #define MAX_LUN 0xF
+-#define USBSTOR_DEFAULT_MAX_TRANSFER_LENGTH 0x10000
++// One megabyte per command, the largest transfer the xHCI driver accepts.
++// At 64 KiB the per-command overhead bounds sequential throughput.
++#define USBSTOR_DEFAULT_MAX_TRANSFER_LENGTH 0x100000
+ 
+ #define CBW_SIGNATURE 0x43425355
+ #define CSW_SIGNATURE 0x53425355

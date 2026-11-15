@@ -74,6 +74,7 @@ NTSTATUS runtime_create(PDEVICE_OBJECT fdo, PDEVICE_OBJECT pdo, const RegisterVi
     KeInitializeSpinLock(&owner->lock);
     KeInitializeMutex(&owner->lifecycle, 0);
     KeInitializeEvent(&owner->worker_idle, NotificationEvent, TRUE);
+    KeInitializeEvent(&owner->large_free, SynchronizationEvent, FALSE);
     KeInitializeEvent(&owner->callers_idle, NotificationEvent, TRUE);
     for (auto &command : owner->pending) {
         KeInitializeEvent(&command.event, NotificationEvent, FALSE);
@@ -140,6 +141,7 @@ NTSTATUS runtime_start(Runtime *runtime) noexcept {
         // Without a usable interrupt the timer services the event ring.
         if (!NT_SUCCESS(connect_interrupt(*runtime))) {
             InterlockedExchange(&runtime->counters.polling, 1);
+            request_fast_clock();
         }
         status = hardware_start(*runtime);
 #ifdef XHCI_TEST_FIRST_START_RESET

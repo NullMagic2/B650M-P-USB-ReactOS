@@ -24,7 +24,9 @@ On 2026-11-14 the board booted ReactOS to the desktop from a USB stick through t
 
 Release v0.2.0 carries these changes in two downloads. The installer updates `xhci.sys` and the four class drivers of an installed system. `B650M-P-USB-ReactOS-boot-files-i386.zip` holds the exact loader, boot bridge and drivers that booted the board, for updating a prepared USB system from another operating system; its READ-ME lists where each file goes. Installing or rolling back with the v0.2.0 installer was not exercised in ReactOS. The sequence of failures and fixes is in [evidence/physical-usb-root-boot.txt](evidence/physical-usb-root-boot.txt).
 
-Still open: ReactOS sees 1 GiB of RAM; `1022:43F7` appears to run in polling mode; MYSTIC LIGHT lighting control does not work; a keyboard was sometimes absent in Linux after a ReactOS session until replugged, cause unknown; and only one board and one USB stick were tested.
+**After v0.2.0 (on `main`, not yet in a release):** the board felt very slow from USB. The driver was copying data through uncached buffers, allocating a buffer per transfer, and could wrongly fall back to checking for completed transfers once per clock tick; the storage driver also limited each command to 64 KiB. These are fixed and commands may now be 1 MiB. In the emulator 64 KiB sequential reads went from 28 to about 267 MB/s. That compares driver builds; nothing is measured on the board yet. See [evidence/usb-throughput.txt](evidence/usb-throughput.txt).
+
+Still open: storage uses the bulk-only protocol (no UAS or streams); ReactOS sees 1 GiB of RAM; `1022:43F7` appears to run in polling mode; MYSTIC LIGHT lighting control does not work; a keyboard was sometimes absent in Linux after a ReactOS session until replugged, cause unknown; and only one board and one USB stick were tested.
 
 Build instructions are in [GETTING_STARTED.txt](GETTING_STARTED.txt); installation and recovery options are in [packaging/INSTALL.txt](packaging/INSTALL.txt). Run the installer with `--extract` to export its verified runtime payloads. No source archive or full ReactOS tree is embedded in the installer.
 
