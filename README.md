@@ -4,26 +4,13 @@ Welcome! This project makes the USB ports of the **MSI PRO B650M-P (MS-7E27)** m
 
 ReactOS does not yet know how to talk to the USB controllers of a modern AMD board, so on its own your keyboard, mouse and USB drives stay silent. The driver in this repository fills that gap. It also lets the board start ReactOS straight from a USB stick, all the way to the desktop.
 
-**[Download the latest release](https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/latest)**
-
-## What you get
-
-- **Working USB ports.** Keyboards, mice, hubs, flash drives and external disks, on the USB 2 and USB 3 ports alike.
-- **ReactOS from a USB stick.** The real board boots from USB to the ReactOS desktop.
-- **Support for fast disk enclosures.** Drives that offer USB Attached SCSI (UAS) on a USB 3 port can use it.
-- **A careful installer.** It checks your system before changing anything and keeps the original files, so there is a way back.
-
-## Is this for you?
-
-It is, if you have this exact motherboard and want to run the 32-bit (i386) version of ReactOS on it.
-
 The driver is deliberately picky. It only starts on the five USB controllers of this board (AMD `1022:43F7`, `1022:15B9`, `1022:15BA`, `1022:15C0` and `1022:15C1`), and only on the board revisions that were actually checked. On any other hardware it simply stays out of the way. It is made for ReactOS; Windows and 64-bit ReactOS are not supported.
 
 ## Getting started
 
 Pick the situation that matches yours. Both downloads are on the [release page](https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/latest).
 
-### ReactOS is already installed on the computer
+### Computer installation
 
 1. Download **B650M-P-USB-ReactOS-Setup-i386.exe**.
 2. Copy it into ReactOS and run it.
@@ -31,7 +18,7 @@ Pick the situation that matches yours. Both downloads are on the [release page](
 
 Everything it needs is inside that one file, so there is nothing else to download. Because it replaces system files, the installer first compares your ReactOS with the build it was prepared for. If they differ, it stops and changes nothing. In that case you can still build the drivers yourself; see [For developers](#for-developers).
 
-### You run ReactOS from a USB stick
+### USB stick
 
 Download **B650M-P-USB-ReactOS-boot-files-i386.zip**. It holds the boot loader and the drivers exactly as they ran on the real board, for updating a ReactOS USB system from another operating system. The READ-ME inside says where each file goes.
 
