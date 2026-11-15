@@ -76,6 +76,13 @@ struct UsbBus {
     ULONG device_count{}, generation{};
     KMUTEX thread_mutex;
     HANDLE interrupt_threads[32]{};
+    // Isochronous requests accepted and not yet taken by the service thread,
+    // in arrival order; guarded by lock. The thread exists only once an
+    // isochronous endpoint has been configured.
+    LIST_ENTRY isoch_queue;
+    KEVENT isoch_wake;
+    PETHREAD isoch_thread{};
+    volatile LONG isoch_exit{};
 };
 inline RootHub *usb_reference_root(UsbBus &bus, ULONG index) noexcept {
     KIRQL irql;
@@ -113,6 +120,18 @@ NTSTATUS usb_control(UsbDevice &, const SetupPacket &, void *, ULONG &, PIRP = n
                      USBD_STATUS * = nullptr) noexcept;
 NTSTATUS usb_select_configuration(UsbDevice &, PURB, PIRP) noexcept;
 NTSTATUS usb_submit_urb(UsbBus &, RootHub *, PURB, PIRP) noexcept;
+// Any IRQL up to DISPATCH_LEVEL, from the internal-request dispatch with the
+// remove lock held. Queues an isochronous URB for the service thread and
+// returns STATUS_PENDING, or the reason it was not accepted.
+NTSTATUS usb_isoch_accept(UsbBus &, RootHub *, PIRP, PURB) noexcept;
+// PASSIVE_LEVEL. Starts the service thread if it is not running.
+NTSTATUS usb_isoch_prepare(UsbBus &) noexcept;
+// PASSIVE_LEVEL, after the bus's requests have all completed.
+void usb_isoch_join(UsbBus &) noexcept;
+// Runtime callback: a request is ready to be collected.
+void usb_isoch_notify(void *bus) noexcept;
+// Resolves a URB's direct or MDL-described buffer to a system address.
+NTSTATUS usb_map_buffer(void *direct, PMDL, ULONG bytes, void *&mapped) noexcept;
 NTSTATUS usb_root_request(RootHub &, const SetupPacket &, void *, ULONG &) noexcept;
 NTSTATUS usb_create_device(UsbBus &, UsbDevice *, USHORT, USHORT, UsbDevice *&) noexcept;
 NTSTATUS usb_initialize_device(UsbDevice &) noexcept;

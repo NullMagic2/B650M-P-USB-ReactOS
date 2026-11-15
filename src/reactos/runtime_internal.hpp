@@ -9,6 +9,7 @@ Architecture: Shared privately by DMA, controller and interrupt implementations.
 #include "runtime.hpp"
 #include "runtime_power.hpp"
 #include "boot_trace.hpp"
+#include "../core/isoch.hpp"
 namespace xhci::native {
 inline constexpr ULONG runtime_tag = 'RxhX';
 inline constexpr ULONG maximum_slots = 255;
@@ -46,6 +47,32 @@ struct PendingTransfer {
     NTSTATUS status{};
     bool pending{}, retired{}, short_packet{}, caller{};
 };
+struct IsochPacket {
+    // Position and size in the caller's buffer, position in the common
+    // buffer, and what the controller reported.
+    ULONG offset, length, place, actual;
+    UCHAR code, state;
+};
+inline constexpr UCHAR isoch_ran = 1, isoch_not_accessed = 2;
+// One isochronous request: a common buffer and one ring entry per packet.
+struct IsochBatch {
+    LIST_ENTRY link;
+    DmaBuffer memory;
+    void *context, *buffer;
+    NTSTATUS status;
+    USHORT count, resolved;
+    bool input, retired;
+    IsochPacket packets[1];
+};
+// Present only for an isochronous endpoint. Guarded by the runtime lock.
+struct IsochEndpoint {
+    // Requests with packets on the ring, oldest first.
+    LIST_ENTRY flight;
+    // Ring entry to its request and packet number.
+    IsochBatch *owners[producer_entries];
+    UCHAR packet_of[producer_entries];
+};
+static_assert(maximum_isoch_packets <= 256, "packet numbers are stored in a byte");
 struct Slot {
     DmaBuffer input, output;
     Ring endpoints[32];
@@ -56,6 +83,7 @@ struct Slot {
     // stream ID its ring serves; zero for an ordinary endpoint.
     DmaBuffer stream_arrays[32];
     UCHAR stream_ids[32]{};
+    IsochEndpoint *isoch[32]{};
     bool enabled{};
 };
 struct PendingCommand {
@@ -114,6 +142,10 @@ struct Runtime {
     LONG expiry_taken{};
     PortNotify port_notify{};
     void *port_context{};
+    // Finished isochronous requests awaiting runtime_isoch_reap. Lock held.
+    LIST_ENTRY isoch_done;
+    IsochNotify isoch_notify{};
+    void *isoch_context{};
 };
 // Any IRQL. Declares the controller faulted and keeps the first cause.
 inline void raise_fault(Runtime &runtime, ULONG site) noexcept {
@@ -155,6 +187,12 @@ void request_recovery(Runtime &runtime) noexcept;
 void complete_all(Runtime &runtime, NTSTATUS status) noexcept;
 // Runtime lock held; event supplies an actual ring TRB pointer, never an NT pointer.
 void transfer_event(Runtime &, const Trb &) noexcept;
+// Runtime lock held. An event for an endpoint that has isochronous state.
+void isoch_transfer_event(Runtime &, UCHAR slot, UCHAR endpoint, const Trb &) noexcept;
+// Runtime lock held. Ends every request on the endpoint with status and
+// empties its ring accounting. retired tells whether the controller is known
+// to have left the common buffers.
+void isoch_flush(Runtime &, Ring &, IsochEndpoint &, NTSTATUS status, bool retired) noexcept;
 bool hardware_stop(Runtime &runtime) noexcept;
 NTSTATUS hardware_start(Runtime &runtime) noexcept;
 void initialize_callbacks(Runtime &runtime) noexcept;

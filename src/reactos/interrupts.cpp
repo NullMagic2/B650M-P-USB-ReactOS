@@ -409,6 +409,12 @@ void complete_all(Runtime &runtime, NTSTATUS status) noexcept {
                 KeSetEvent(&transfer->event, IO_NO_INCREMENT, FALSE);
             }
         }
+        for (ULONG endpoint = 2; endpoint < 32; ++endpoint) {
+            if (auto *isoch = runtime.slots[slot].isoch[endpoint]) {
+                isoch_flush(runtime, runtime.slots[slot].endpoints[endpoint], *isoch, status,
+                            runtime.stopped && !runtime.quarantined);
+            }
+        }
     }
 }
 void poll_events(Runtime &runtime) noexcept {

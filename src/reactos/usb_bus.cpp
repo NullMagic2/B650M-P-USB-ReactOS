@@ -161,6 +161,8 @@ NTSTATUS usb_start(Device &controller) noexcept {
         KeInitializeMutex(&bus->enumeration, 0);
         KeInitializeMutex(&bus->thread_mutex, 0);
         KeInitializeEvent(&bus->workers_idle, NotificationEvent, TRUE);
+        InitializeListHead(&bus->isoch_queue);
+        KeInitializeEvent(&bus->isoch_wake, SynchronizationEvent, FALSE);
         controller.usb = bus;
         for (UCHAR i = 0; i < 2; ++i) {
             initialize_device(bus->root_devices[i], *bus);
@@ -214,6 +216,7 @@ NTSTATUS usb_start(Device &controller) noexcept {
     ++bus->generation;
     InterlockedExchange(&bus->closing, 0);
     runtime_set_port_notify(controller.runtime, usb_port_notify, bus);
+    runtime_set_isoch_notify(controller.runtime, usb_isoch_notify, bus);
     IoInvalidateDeviceRelations(controller.pdo, BusRelations);
     return STATUS_SUCCESS;
 }
@@ -275,6 +278,7 @@ void usb_join(Device &controller) noexcept {
     if (controller.usb) {
         KeWaitForSingleObject(&controller.usb->workers_idle, Executive, KernelMode, FALSE, nullptr);
         auto &bus = *controller.usb;
+        usb_isoch_join(bus);
         KeWaitForSingleObject(&bus.thread_mutex, Executive, KernelMode, FALSE, nullptr);
         for (auto &thread : bus.interrupt_threads) {
             if (thread) {
@@ -332,6 +336,9 @@ bool usb_destroy(Device &controller) noexcept {
         if (thread) {
             return false;
         }
+    }
+    if (bus->isoch_thread) {
+        return false;
     }
     for (ULONG i = 0; i < bus->device_count; ++i) {
         if (bus->devices[i]->configuration) {

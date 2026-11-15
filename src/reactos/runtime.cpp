@@ -72,6 +72,7 @@ NTSTATUS runtime_create(PDEVICE_OBJECT fdo, PDEVICE_OBJECT pdo, const RegisterVi
     owner->stopped = true;
     owner->recovery_status = STATUS_IO_TIMEOUT;
     KeInitializeSpinLock(&owner->lock);
+    InitializeListHead(&owner->isoch_done);
     KeInitializeMutex(&owner->lifecycle, 0);
     KeInitializeEvent(&owner->worker_idle, NotificationEvent, TRUE);
     KeInitializeEvent(&owner->large_free, SynchronizationEvent, FALSE);

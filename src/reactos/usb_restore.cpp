@@ -97,6 +97,11 @@ NTSTATUS restore_locked(UsbDevice &old_device, UsbDevice &new_device) noexcept {
             ULONGLONG dequeue{};
             status = runtime_prepare_endpoint(runtime, new_device.slot, static_cast<UCHAR>(dci),
                                               dequeue, pipe.policy.stream_array);
+            if (NT_SUCCESS(status)) {
+                status = runtime_isoch_endpoint(
+                    runtime, new_device.slot, static_cast<UCHAR>(dci),
+                    (pipe.descriptor.bmAttributes & 3) == USB_ENDPOINT_TYPE_ISOCHRONOUS);
+            }
             if (!NT_SUCCESS(status)) {
                 return status;
             }

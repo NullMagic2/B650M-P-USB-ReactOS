@@ -19,6 +19,7 @@ enum class TrbType : std::uint8_t {
     setup = 2,
     data = 3,
     status = 4,
+    isoch = 5,
     link = 6,
     enable_slot = 9,
     disable_slot = 10,

@@ -50,14 +50,16 @@ bool endpoint_policy(UsbSpeed speed, const std::uint8_t *descriptor, std::size_t
     const unsigned wire_packet = little16(descriptor + 4);
     const unsigned packet = wire_packet & 0x7ff;
     const unsigned transactions = (wire_packet >> 11) & 3;
-    if (!packet || (wire_packet & 0xe000) || transfer == 1 || ((number == 0) != (transfer == 0)) ||
-        (descriptor[3] & 0xfc)) {
+    // Isochronous endpoints use bits 2..5 for synchronization and usage type.
+    if (!packet || (wire_packet & 0xe000) || ((number == 0) != (transfer == 0)) ||
+        (descriptor[3] & (transfer == 1 ? 0xc0 : 0xfc))) {
         return false;
     }
     EndpointPolicy candidate{};
     candidate.max_packet = static_cast<std::uint16_t>(packet);
     candidate.dci = static_cast<std::uint8_t>(number ? 2 * number + input : 1);
     candidate.type = static_cast<std::uint8_t>(transfer == 0   ? 4
+                                               : transfer == 1 ? (input ? 5 : 1)
                                                : transfer == 2 ? (input ? 6 : 2)
                                                                : (input ? 7 : 3));
     if (transfer == 0) {
@@ -68,6 +70,19 @@ bool endpoint_policy(UsbSpeed speed, const std::uint8_t *descriptor, std::size_t
             (speed >= UsbSpeed::super && packet != 512)) {
             return false;
         }
+    } else if (transfer == 1) {
+        // bInterval is an exponent at every speed: 2^(bInterval-1) frames at
+        // full speed, microframes above it. The context counts microframes.
+        const unsigned exponent = descriptor[6];
+        if (speed == UsbSpeed::low || !exponent || exponent > 16 ||
+            (speed == UsbSpeed::full && (packet > 1023 || transactions)) ||
+            packet > 1024 || transactions == 3 || (transactions && speed != UsbSpeed::high)) {
+            return false;
+        }
+        candidate.interval =
+            static_cast<std::uint8_t>(exponent - 1 + (speed == UsbSpeed::full ? 3 : 0));
+        candidate.burst = static_cast<std::uint8_t>(transactions);
+        candidate.bytes_per_interval = packet * (transactions + 1);
     } else if (transfer == 2) {
         if (speed == UsbSpeed::low || transactions ||
             (speed == UsbSpeed::full && packet != 8 && packet != 16 && packet != 32 &&
@@ -88,16 +103,23 @@ bool endpoint_policy(UsbSpeed speed, const std::uint8_t *descriptor, std::size_t
     if (speed >= UsbSpeed::super && transfer != 0) {
         if (!companion || companion_bytes < 6 || companion[0] < 6 ||
             companion[0] > companion_bytes || companion[1] != 0x30 || companion[2] > 15 ||
-            (transfer == 2 ? (companion[3] & 0xe0) != 0 || (companion[3] & 0x1f) > 16
-                           : companion[3] != 0)) {
+            (transfer == 2   ? (companion[3] & 0xe0) != 0 || (companion[3] & 0x1f) > 16
+             : transfer == 1 ? (companion[3] & 0x7c) != 0 || (companion[3] & 3) == 3
+                             : companion[3] != 0)) {
             return false;
         }
         candidate.burst = companion[2];
         candidate.streams = transfer == 2 ? static_cast<std::uint8_t>(companion[3] & 0x1f) : 0;
+        // Isochronous Mult: up to three bursts per service interval. Bit 7
+        // announces a SuperSpeedPlus companion, which is not used.
+        candidate.mult = transfer == 1 ? static_cast<std::uint8_t>(companion[3] & 3) : 0;
         const unsigned interval_bytes = little16(companion + 4);
         if ((transfer == 2 && interval_bytes) ||
             (transfer == 3 &&
-             (!interval_bytes || interval_bytes > packet * (candidate.burst + 1)))) {
+             (!interval_bytes || interval_bytes > packet * (candidate.burst + 1))) ||
+            (transfer == 1 &&
+             (!interval_bytes ||
+              interval_bytes > packet * (candidate.burst + 1) * (candidate.mult + 1)))) {
             return false;
         }
         candidate.bytes_per_interval = interval_bytes;
@@ -105,8 +127,11 @@ bool endpoint_policy(UsbSpeed speed, const std::uint8_t *descriptor, std::size_t
         return false;
     }
     candidate.context0 = (static_cast<std::uint32_t>(candidate.interval) << 16) |
+                         (static_cast<std::uint32_t>(candidate.mult) << 8) |
                          ((candidate.bytes_per_interval >> 16) << 24);
-    candidate.context1 = 6u | (static_cast<std::uint32_t>(candidate.type) << 3) |
+    // Three retries for every type but isochronous, which is never retried.
+    candidate.context1 = (transfer == 1 ? 0u : 6u) |
+                         (static_cast<std::uint32_t>(candidate.type) << 3) |
                          (static_cast<std::uint32_t>(candidate.burst) << 8) | (packet << 16);
     candidate.context4 = (candidate.bytes_per_interval << 16) |
                          static_cast<std::uint32_t>(transfer == 0 ? 8 : packet);

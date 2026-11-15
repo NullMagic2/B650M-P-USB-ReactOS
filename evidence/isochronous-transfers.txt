@@ -1,0 +1,104 @@
+Isochronous transfers, 2026-11-15
+
+Scope
+  USB devices that carry a timed stream (USB sound devices, webcams) use
+  isochronous transfers. The controller driver had none: such an endpoint
+  could not be configured and URB_FUNCTION_ISOCH_TRANSFER was refused. This
+  adds them to the controller driver. It does not add a sound or camera
+  driver: ReactOS 0.4.16 builds and ships no USB audio class driver (its
+  drivers/usb/usbaudio is not in the build and has no INF), has no USB video
+  class driver, and its own USB stack leaves isochronous unimplemented. Until
+  a class driver exists nothing in ReactOS issues these transfers.
+
+Controller driver
+  - Endpoint context: type 1 (OUT) or 5 (IN), no retries, interval as an
+    exponent of 125 microseconds (bInterval - 1, plus 3 at full speed), Max
+    Burst from the additional transactions (high speed) or the companion
+    (SuperSpeed, with Mult), Max ESIT Payload from the packet size or the
+    companion's wBytesPerInterval. src/core/usb_policy.cpp.
+  - One packet is one TD of one Isoch TRB with Start Isoch ASAP, interrupt
+    on completion and, for all but a request's last packet, Block Event
+    Interrupt. Transfer Burst Count and Last Burst Packet Count follow xHCI
+    4.11.2.3. Packet data is placed in the common buffer so that no packet
+    crosses a 64 KiB boundary. src/core/isoch.cpp.
+  - Several requests share an endpoint ring. Each ring entry maps to its
+    request and packet; a transfer event settles that packet, and any older
+    entry that got no event of its own is reported as not accessed (Missed
+    Service). Ring underrun and overrun events are ignored.
+    src/reactos/isoch.cpp.
+  - One service thread per bus, created when an isochronous endpoint is first
+    configured, takes requests in arrival order, puts them on the ring when
+    there is room, collects finished ones at PASSIVE_LEVEL (copying received
+    data out and writing each packet's status and length) and completes
+    them. It stops the endpoint when one of its requests is cancelled or has
+    had no answer for five seconds. src/reactos/usb_isoch.cpp.
+  - Selecting a setting, URB_FUNCTION_ABORT_PIPE, device removal and
+    controller stop end every request queued on the endpoint through a real
+    Stop Endpoint and dequeue move.
+  - URB_FUNCTION_GET_CURRENT_FRAME_NUMBER returns the controller's 11-bit
+    frame index. StartFrame is written with the frame a request was queued
+    in; a start frame chosen by the caller is not honoured.
+  - A pipe's MaximumPacketSize reports what one service interval carries.
+  Control, bulk and interrupt transfers keep their existing path.
+
+Host checks
+  Nine suites pass with address and undefined-behaviour sanitizers; the new
+  one (tests/isoch_tests.cpp, 562 checks) covers endpoint contexts at full,
+  high and SuperSpeed, TRB encoding including burst counts, placement
+  against 64 KiB boundaries, capacity bounds and event decoding.
+
+Emulator, QEMU/KVM, ReactOS USB-root image, one qemu-xhci controller, system
+disk as USB storage, QEMU usb-audio (full speed, one isochronous OUT endpoint,
+192 bytes every frame) on a root port. A test client (tests/isoch, built only
+with XHCI_NATIVE_ISOCH_TEST, never delivered) binds to the device, keeps four
+requests of ten packets queued and resubmits each from its completion. Left
+channel carries the running sample number and right its complement, so the
+packets QEMU captured at the device (pcap=) show any loss or reordering. The
+controller driver was a delivery build with the untested-controller switch on.
+  1. Stream: 300 requests, 3000 packets, all reported successful, in 2.999 s.
+     Capture: 3000 packets of 192 bytes, largest gap 1.12 ms, 144000 samples
+     in sequence, no right-channel mismatch.
+  2. Drop: four queued requests, then the idle setting selected. All four
+     returned USBD_STATUS_CANCELED; none reached the device.
+  3. Cancel: streaming again, the newest queued request cancelled. Three
+     requests returned cancelled, the 21 before them complete.
+  4. Restart: 100 further requests, 1000 packets, all successful in 0.99 s.
+     Capture over 2 to 4: the only sequence breaks are the 40 dropped and
+     30 cancelled packets.
+  5. Timer service (fixture XHCI_TEST_NO_INTERRUPT, no interrupt delivered):
+     phases 1 to 4 with the same results; 11987 polled batches, no fault.
+  6. Unplug: a 20 s stream, device removed after 10.8 s. 10781 packets
+     captured in sequence, the four requests then queued returned cancelled,
+     the client's next requests were refused, ReactOS kept running and shut
+     down normally.
+  7. Load: a 20 s stream while a UAS disk on the same controller was read
+     and written in a loop (checksums and written-file readback as before).
+     20000 packets, none failed, none lost or reordered. The capture shows
+     two to five gaps of 1.6 to 6 ms between packets; the ring held at least
+     30 ms of packets throughout, so these are taken to be emulator timing,
+     which this setup cannot separate from the driver.
+  The committed source differs from the binary used in 1 to 4, 6 and 7 by
+  formatting; the rebuilt file differs in seven bytes (time stamp, checksum
+  and three source line numbers) and repeated 1 to 4 with the same results.
+
+Not verified
+  - Isochronous IN (QEMU's device has no input endpoint); only the host
+    checks and the shared code path cover it.
+  - High-speed and SuperSpeed isochronous endpoints, bursts, Mult.
+  - A device behind a hub. In this emulator setup ReactOS does not enumerate
+    any device behind QEMU's hub, with this build or with the v0.3.0-era
+    driver; that is a separate, older problem and was not investigated here.
+  - Real hardware: Missed Service, ring underrun, Block Event Interrupt and
+    bandwidth errors as a real controller reports them.
+  - Any class driver. ReactOS's usbaudio source compiles from the 0.4.16
+    tree. In one boot it was registered for the sound card's audio function
+    by registry entries alone, without an INF: ReactOS showed its New
+    Hardware Wizard for "Audio Device", no audio class request reached the
+    device and playing a sound file failed. Whether the driver loaded was
+    not established; making it work is a task of its own.
+
+Seen in passing
+  One boot of the test image with the previous driver stopped on a ReactOS
+  assertion (!Irp->CancelRoutine, with classpnp, mountmgr and fastfat on the
+  stack) before any of this code was installed. Not reproduced, not
+  investigated.

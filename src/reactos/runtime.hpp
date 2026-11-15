@@ -10,6 +10,7 @@ Architecture: PnP owns mapping lifetime; quarantined runtimes must remain mapped
 #include "../core/controller.hpp"
 #include "../core/rings.hpp"
 #include "../core/usb_transfer.hpp"
+#include "../core/isoch.hpp"
 #include "../hardware/registers.hpp"
 namespace xhci::native {
 struct Runtime;
@@ -65,6 +66,54 @@ NTSTATUS runtime_transfer(Runtime *, UCHAR slot, UCHAR endpoint, USHORT packet, 
 // Caller serialized endpoint. stop/dequeue is also required after a halted TD.
 NTSTATUS runtime_abort_endpoint(Runtime *, UCHAR slot, UCHAR endpoint,
                                 bool reset_halted) noexcept;
+// Isochronous requests. Unlike runtime_transfer, several stay on an endpoint
+// ring at once and none blocks its submitter: the controller must find the
+// next packet queued when an interval begins.
+struct IsochRequest {
+    UCHAR slot{}, endpoint{};
+    IsochShape shape{};
+    // Most bytes one packet may carry: the endpoint's Max ESIT Payload.
+    ULONG payload{};
+    // Caller's data and the ascending offset of each packet in it. A packet
+    // ends where the next begins; the last ends at length. The buffer must
+    // stay mapped until the request is reaped.
+    void *buffer{};
+    ULONG length{};
+    const ULONG *offsets{};
+    ULONG packets{};
+    // Returned by runtime_isoch_reap; never null.
+    void *context{};
+};
+// PASSIVE_LEVEL, after runtime_prepare_endpoint and before Configure Endpoint.
+// Gives the endpoint its isochronous state, or removes it when the same
+// endpoint number is configured as another type.
+NTSTATUS runtime_isoch_endpoint(Runtime *, UCHAR slot, UCHAR endpoint, bool isochronous) noexcept;
+// PASSIVE_LEVEL; does not wait for the bus. STATUS_DEVICE_BUSY means the ring
+// has no room for the whole request now; try again after a request finishes.
+// Requests of one endpoint must be submitted by one thread, in order.
+NTSTATUS runtime_isoch_submit(Runtime *, const IsochRequest &) noexcept;
+struct IsochPacketResult {
+    ULONG actual{};
+    // xHCI completion code; 1 when the packet transferred.
+    UCHAR code{};
+    // False when the controller never ran the packet.
+    bool accessed{};
+};
+using IsochPacketSink = void (*)(void *context, ULONG index,
+                                 const IsochPacketResult &) noexcept;
+// PASSIVE_LEVEL. Collects one finished request: copies received data into its
+// buffer, reports every packet through sink and releases its memory. status
+// is STATUS_SUCCESS when the packets ran, STATUS_CANCELLED after an abort.
+bool runtime_isoch_reap(Runtime *, void *&context, NTSTATUS &status,
+                        IsochPacketSink sink) noexcept;
+// PASSIVE_LEVEL, caller serializes the endpoint. Stops the endpoint and ends
+// every request on it as cancelled. If the controller does not confirm the
+// stop, the runtime is declared faulted and recovery ends the requests.
+NTSTATUS runtime_isoch_abort(Runtime *, UCHAR slot, UCHAR endpoint) noexcept;
+using IsochNotify = void (*)(void *context) noexcept;
+// Called at up to DISPATCH_LEVEL with the runtime lock held whenever a
+// request becomes collectable. Same lifetime rule as the port callback.
+void runtime_set_isoch_notify(Runtime *, IsochNotify, void *context) noexcept;
 using PortNotify = void (*)(void *context, ULONG port) noexcept;
 // PASSIVE, root owner lifetime remains pinned until runtime_quiesce joins DPCs.
 // At most DISPATCH_LEVEL. The callback runs at DPC level. Replacing or clearing

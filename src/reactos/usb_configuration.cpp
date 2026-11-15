@@ -66,6 +66,14 @@ NTSTATUS fill_interface(UsbDevice &device, PUSBD_INTERFACE_INFORMATION informati
             policy.streams && device.bus->controller->capabilities.stream_array_exponent;
         NTSTATUS status = runtime_prepare_endpoint(device.bus->controller->runtime, device.slot,
                                                    policy.dci, dequeue, policy.stream_array);
+        const bool isochronous = (cursor[3] & 3) == USB_ENDPOINT_TYPE_ISOCHRONOUS;
+        if (NT_SUCCESS(status)) {
+            status = runtime_isoch_endpoint(device.bus->controller->runtime, device.slot,
+                                            policy.dci, isochronous);
+        }
+        if (NT_SUCCESS(status) && isochronous) {
+            status = usb_isoch_prepare(*device.bus);
+        }
         if (!NT_SUCCESS(status)) {
             return status;
         }
@@ -80,7 +88,10 @@ NTSTATUS fill_interface(UsbDevice &device, PUSBD_INTERFACE_INFORMATION informati
         image.interfaces[policy.dci] = information->InterfaceNumber;
         RtlCopyMemory(&image.descriptors[policy.dci], cursor, sizeof(pipe.descriptor));
         auto &output = information->Pipes[found++];
-        output.MaximumPacketSize = policy.max_packet;
+        // An isochronous pipe reports what one service interval can carry,
+        // which is more than one packet for a high-bandwidth endpoint.
+        output.MaximumPacketSize =
+            isochronous ? static_cast<USHORT>(policy.bytes_per_interval) : policy.max_packet;
         output.EndpointAddress = cursor[2];
         output.Interval = cursor[6];
         output.PipeType = static_cast<USBD_PIPE_TYPE>(cursor[3] & 3);
@@ -154,6 +165,15 @@ NTSTATUS usb_select_configuration(UsbDevice &device, PURB urb, PIRP irp) noexcep
         if (locked[dci]) {
             KeWaitForSingleObject(&usb_pipe(device, dci).mutex, Executive, KernelMode, FALSE,
                                   nullptr);
+        }
+    }
+    // Isochronous requests stay on their ring without holding the pipe, so
+    // they are ended here, before the ring is prepared for its next use.
+    for (UCHAR dci = 2; dci < 32; ++dci) {
+        auto &pipe = usb_pipe(device, dci);
+        if (locked[dci] && pipe.configured &&
+            (pipe.descriptor.bmAttributes & 3) == USB_ENDPOINT_TYPE_ISOCHRONOUS) {
+            runtime_isoch_abort(device.bus->controller->runtime, device.slot, dci);
         }
     }
     void *address{};

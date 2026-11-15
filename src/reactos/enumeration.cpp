@@ -286,6 +286,15 @@ NTSTATUS usb_remove_device(UsbDevice &device, bool keep_data) noexcept {
     for (ULONG dci = 1; dci < 32; ++dci) {
         KeWaitForSingleObject(&usb_pipe(device, dci).mutex, Executive, KernelMode, FALSE, nullptr);
     }
+    // Isochronous requests have no owner holding their pipe; end them before
+    // the slot and its rings are released.
+    for (UCHAR dci = 2; dci < 32 && !device.bus->closing && device.slot; ++dci) {
+        auto &pipe = usb_pipe(device, dci);
+        if (pipe.configured &&
+            (pipe.descriptor.bmAttributes & 3) == USB_ENDPOINT_TYPE_ISOCHRONOUS) {
+            runtime_isoch_abort(device.bus->controller->runtime, device.slot, dci);
+        }
+    }
     NTSTATUS status = device.bus->closing ? STATUS_DEVICE_NOT_CONNECTED
                       : !device.slot
                           ? STATUS_SUCCESS

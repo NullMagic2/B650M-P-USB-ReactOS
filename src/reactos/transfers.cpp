@@ -60,6 +60,10 @@ void transfer_event(Runtime &runtime, const Trb &event) noexcept {
         return;
     }
     auto &owner = runtime.slots[slot];
+    if (owner.isoch[endpoint]) {
+        isoch_transfer_event(runtime, slot, endpoint, event);
+        return;
+    }
     auto &ring = owner.endpoints[endpoint];
     const ULONG residual = event.status & 0x00ffffffu;
     const ULONGLONG address = trb_parameter(event);
@@ -199,6 +203,10 @@ NTSTATUS runtime_abort_endpoint(Runtime *runtime, UCHAR slot, UCHAR endpoint,
             }
             KeSetEvent(&transfer->event, IO_NO_INCREMENT, FALSE);
         }
+        // The dequeue pointer now passes every queued isochronous packet.
+        if (auto *isoch = runtime->slots[slot].isoch[endpoint]) {
+            isoch_flush(*runtime, ring, *isoch, STATUS_CANCELLED, true);
+        }
         KeReleaseSpinLock(&runtime->lock, irql);
     }
     KeReleaseMutex(&serialization, FALSE);
@@ -225,7 +233,8 @@ NTSTATUS runtime_transfer(Runtime *runtime, UCHAR slot, UCHAR endpoint, USHORT p
     auto &owner = runtime->slots[slot];
     NTSTATUS status = STATUS_DEVICE_NOT_READY;
     if (!runtime->closing && !runtime->gone && !runtime->fault && runtime->running &&
-        owner.enabled && owner.endpoints[endpoint].memory.address && !owner.transfers[endpoint]) {
+        owner.enabled && owner.endpoints[endpoint].memory.address && !owner.transfers[endpoint] &&
+        !owner.isoch[endpoint]) {
         status = transfer_buffer_acquire(*runtime, transfer->memory, length ? length : 1);
     }
     if (NT_SUCCESS(status) && !build_transfer(transfer->memory.logical, length, packet, input,

@@ -28,7 +28,8 @@ struct EndpointPolicy {
 // entries (MaxPStreams 1, LSA). Only stream ID 1 is given a transfer ring.
 inline constexpr std::uint32_t stream_context0 = (1u << 10) | (1u << 15);
 // No allocation or ownership transfer. A companion must immediately follow a SuperSpeed
-// non-control endpoint. Isochronous endpoints are outside initial scope.
+// non-control endpoint. For an isochronous endpoint bytes_per_interval is the
+// Max ESIT Payload: the most data one service interval can carry.
 bool endpoint_policy(UsbSpeed speed, const std::uint8_t *endpoint, std::size_t endpoint_bytes,
                      const std::uint8_t *companion, std::size_t companion_bytes,
                      EndpointPolicy &policy) noexcept;

@@ -44,7 +44,7 @@ This is a young project, tested on one board with one USB stick. Here is an hone
 
 **Not there yet**
 
-- Sound devices and webcams (isochronous transfers).
+- USB sound devices and webcams. The driver source can now carry their data (isochronous transfers, tried in the emulator only), but ReactOS 0.4.16 itself ships no USB sound or camera driver to use it.
 - Sleep and hibernation.
 - Recovering cleanly when a device is unplugged and plugged back in. This needs a ReactOS kernel change (`compat/reactos/pnp*`) that the installer does not apply.
 - MYSTIC LIGHT lighting control.

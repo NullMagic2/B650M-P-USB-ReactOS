@@ -410,6 +410,9 @@ NTSTATUS control_urb(UsbDevice &device, PURB urb, PIRP irp) noexcept {
     return status;
 }
 } // namespace
+NTSTATUS usb_map_buffer(void *direct, PMDL mdl, ULONG bytes, void *&mapped) noexcept {
+    return transfer_buffer(direct, mdl, bytes, mapped);
+}
 USBD_STATUS usb_transfer_status(NTSTATUS status, const TransferResult &result,
                                 bool short_ok) noexcept {
     if (status == STATUS_INSUFFICIENT_RESOURCES) {
@@ -553,6 +556,17 @@ NTSTATUS usb_submit_urb(UsbBus &bus, RootHub *root, PURB urb, PIRP irp) noexcept
         }
         KeReleaseMutex(&pipe->mutex, FALSE);
         return status;
+    } else if (function == URB_FUNCTION_GET_CURRENT_FRAME_NUMBER) {
+        ULONG microframe{};
+        const auto &controller = *bus.controller;
+        if (urb->UrbHeader.Length < sizeof(_URB_GET_CURRENT_FRAME_NUMBER) ||
+            controller.hardware_gone ||
+            !controller.registers.read32(controller.capabilities.runtime_offset, microframe)) {
+            return reject_unsubmitted_urb(urb, STATUS_INVALID_PARAMETER);
+        }
+        // The controller's 11-bit frame index, as the bus interface reports.
+        urb->UrbGetCurrentFrameNumber.FrameNumber = (microframe & 0x3fff) >> 3;
+        status = STATUS_SUCCESS;
     } else if (function == URB_FUNCTION_ABORT_PIPE ||
                function == URB_FUNCTION_SYNC_RESET_PIPE_AND_CLEAR_STALL ||
                function == URB_FUNCTION_SYNC_RESET_PIPE ||
@@ -593,9 +607,16 @@ NTSTATUS usb_submit_urb(UsbBus &bus, RootHub *root, PURB urb, PIRP irp) noexcept
             InterlockedIncrement(&pipe->generation);
             KeWaitForSingleObject(&device->context_mutex, Executive, KernelMode, FALSE, nullptr);
             KeWaitForSingleObject(&pipe->mutex, Executive, KernelMode, FALSE, nullptr);
-            status = runtime_abort_endpoint(bus.controller->runtime, device->slot, pipe->policy.dci,
-                                            function != URB_FUNCTION_ABORT_PIPE);
-            if (NT_SUCCESS(status) && function != URB_FUNCTION_ABORT_PIPE &&
+            const bool isochronous =
+                (pipe->descriptor.bmAttributes & 3) == USB_ENDPOINT_TYPE_ISOCHRONOUS;
+            status = isochronous
+                         ? runtime_isoch_abort(bus.controller->runtime, device->slot,
+                                               pipe->policy.dci)
+                         : runtime_abort_endpoint(bus.controller->runtime, device->slot,
+                                                  pipe->policy.dci,
+                                                  function != URB_FUNCTION_ABORT_PIPE);
+            // An isochronous endpoint never halts, so it has no stall to clear.
+            if (NT_SUCCESS(status) && !isochronous && function != URB_FUNCTION_ABORT_PIPE &&
                 function != URB_FUNCTION_SYNC_RESET_PIPE) {
                 SetupPacket clear{2, USB_REQUEST_CLEAR_FEATURE, 0,
                                   pipe->descriptor.bEndpointAddress, 0};
@@ -654,6 +675,13 @@ NTSTATUS usb_internal(Device &controller, RootHub *root, PIRP irp) noexcept {
                    (!urb->UrbHeader.UsbdDeviceHandle ||
                     urb->UrbHeader.UsbdDeviceHandle == root->device)) {
             status = root_status(*root, irp, urb);
+            if (status == STATUS_PENDING) {
+                return status;
+            }
+        } else if (urb->UrbHeader.Function == URB_FUNCTION_ISOCH_TRANSFER) {
+            // Isochronous requests keep their arrival order and overlap on
+            // the ring, so they bypass the one-worker-per-request path.
+            status = usb_isoch_accept(*bus, root, irp, urb);
             if (status == STATUS_PENDING) {
                 return status;
             }

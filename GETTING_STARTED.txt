@@ -64,6 +64,12 @@ Booting the board from a USB stick
   modules over usbhub.sys, usbstor.sys, disk.sys and hidusb.sys.
   The options beginning XHCI_TEST_ and XHCI_VIRTUAL_TEST_CONTROLLER are emulator
   fixtures. Never install a module built with one of them.
+  XHCI_NATIVE_ISOCH_TEST=ON builds isoch-test-client-i386.sys (tests/isoch), a
+  function driver that streams a counting pattern to a USB audio device's
+  isochronous OUT endpoint and writes what the bus driver reported to
+  \SystemRoot\isotest.txt. It exists to exercise isochronous transfers in the
+  emulator, where QEMU's usb-audio device records every packet it receives
+  (pcap=FILE). It is not a sound driver and is never delivered.
 
   The stick also needs the patched FreeLoader (compat/reactos/freeldr). Without
   its 1 GiB memory bound the stock loader cannot read the disk on machines with

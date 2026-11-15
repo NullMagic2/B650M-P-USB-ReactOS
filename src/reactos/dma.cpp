@@ -217,6 +217,16 @@ void free_slot(Runtime &runtime, UCHAR slot) noexcept {
     for (ULONG endpoint = 0; endpoint < 32; ++endpoint) {
         dma_free(runtime, owner.stream_arrays[endpoint]);
         owner.stream_ids[endpoint] = 0;
+        if (auto *isoch = owner.isoch[endpoint]) {
+            // The slot is disabled or the controller halted, so nothing on
+            // the ring can run any more.
+            KIRQL irql;
+            KeAcquireSpinLock(&runtime.lock, &irql);
+            isoch_flush(runtime, owner.endpoints[endpoint], *isoch, STATUS_CANCELLED, true);
+            owner.isoch[endpoint] = nullptr;
+            KeReleaseSpinLock(&runtime.lock, irql);
+            ExFreePoolWithTag(isoch, runtime_tag);
+        }
     }
     dma_free(runtime, owner.input);
     dma_free(runtime, owner.output);
