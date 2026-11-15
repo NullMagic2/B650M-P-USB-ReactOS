@@ -411,11 +411,11 @@ NTSTATUS device_usage(Device &device, PIRP irp) noexcept {
 }
 } // namespace xhci::native
 extern "C" NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING path) {
-    UNREFERENCED_PARAMETER(path);
     using namespace xhci::native;
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
+    load_admission_policy(path);
     for (auto &dispatch : driver->MajorFunction) {
         dispatch = dispatch_default;
     }

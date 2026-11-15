@@ -7,6 +7,7 @@ Architecture: Synthetic byte images only; no physical controller is accessed.
 */
 #include "controller.hpp"
 #include <array>
+#include <string>
 #include <cstdio>
 #include <cstdlib>
 namespace {
@@ -75,17 +76,40 @@ void pci() {
     xhci::RegisterBar bar{};
     CHECK(xhci::decode_pci_snapshot(bytes.data(), bytes.size(), identity, bar));
     CHECK(bar.pci_address == 0x280000000ULL && bar.is_64_bit);
+    using xhci::Admission;
     CHECK(xhci::match_board_controller(identity) != nullptr);
+    CHECK(xhci::classify_controller(identity) == Admission::tested);
     ++identity.revision;
     CHECK(xhci::match_board_controller(identity) == nullptr);
+    CHECK(xhci::match_controller_model(identity) != nullptr);
+    CHECK(xhci::classify_controller(identity) == Admission::family);
     CHECK(xhci::board_controller_count() == 5);
     for (std::size_t i = 0; i < xhci::board_controller_count(); ++i) {
         const auto *profile = xhci::board_controller_at(i);
         CHECK(profile && xhci::match_board_controller(profile->identity) == profile);
+        CHECK(xhci::classify_controller(profile->identity) == Admission::tested);
         auto wrong = profile->identity;
         wrong.subsystem_device ^= 1;
         CHECK(!xhci::match_board_controller(wrong));
+        CHECK(xhci::match_controller_model(wrong) == profile);
+        CHECK(xhci::classify_controller(wrong) == Admission::family);
+        // Another vendor's device with the same number is a different model.
+        wrong.vendor = 0x8086;
+        CHECK(!xhci::match_controller_model(wrong));
+        CHECK(xhci::classify_controller(wrong) == Admission::untested);
     }
+    // The same processor family's other xHCI and the emulator's controller
+    // were never run by a delivered build.
+    CHECK(xhci::classify_controller({0x1022, 0x15b6, 0x1462, 0x7e27, 0x00}) ==
+          Admission::untested);
+    CHECK(xhci::classify_controller({0x1b36, 0x000d, 0x1af4, 0x1100, 0x01}) ==
+          Admission::untested);
+    CHECK(xhci::admitted(Admission::tested, false) && xhci::admitted(Admission::family, false));
+    CHECK(!xhci::admitted(Admission::untested, false) &&
+          xhci::admitted(Admission::untested, true));
+    CHECK(std::string(xhci::admission_name(Admission::tested)) == "tested" &&
+          std::string(xhci::admission_name(Admission::family)) == "family" &&
+          std::string(xhci::admission_name(Admission::untested)) == "untested");
     CHECK(!xhci::board_controller_at(xhci::board_controller_count()));
     for (std::size_t length = 0; length < bytes.size(); ++length) {
         CHECK(!xhci::decode_pci_snapshot(bytes.data(), length, identity, bar));

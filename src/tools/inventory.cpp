@@ -129,7 +129,9 @@ int main(int argc, char **argv) {
                   << ",\"linux_driver\":" << quote(driver_name)
                   << ",\"iommu_group\":" << quote(group_name)
                   << ",\"profile\":" << quote(profile ? profile->name : "unreviewed")
-                  << ",\"identity_matches_profile\":" << (profile ? "true" : "false") << '}';
+                  << ",\"identity_matches_profile\":" << (profile ? "true" : "false")
+                  << ",\"admission\":"
+                  << quote(xhci::admission_name(xhci::classify_controller(identity))) << '}';
     }
     std::cout << "\n  ],\n  \"identity_matches\":" << admitted
               << ",\n  \"physical_controller_tested\":false\n}\n";

@@ -416,6 +416,8 @@ void release_iommu(Device &device) noexcept {
     }
 }
 volatile LONG attached{}, start_requests{}, lower_failures{}, last_lower_failure{};
+// Nonzero once the user has asked for controllers outside the tested profiles.
+volatile LONG untested_allowed{};
 EnumerationLog enumeration_log{};
 void write_trace(PCWSTR name, const BootTrace &trace) noexcept {
     UNICODE_STRING path;
@@ -501,6 +503,41 @@ void record_enumeration(ULONG where, NTSTATUS status, ULONG ids) noexcept {
                        enumeration_notes;
     enumeration_log.notes[index] = {where, static_cast<ULONG>(status), ids};
 }
+// PASSIVE_LEVEL, from DriverEntry. The switch is the REG_DWORD value
+// AllowUntestedControllers = 1 under the service's Parameters key. A missing
+// key, another type or another number leaves untested controllers refused.
+void load_admission_policy(PCUNICODE_STRING service) noexcept {
+    static const WCHAR suffix[] = L"\\Parameters";
+    WCHAR buffer[192];
+    if (!service || !service->Buffer || (service->Length & 1) ||
+        service->Length + sizeof(suffix) > sizeof(buffer)) {
+        return;
+    }
+    RtlCopyMemory(buffer, service->Buffer, service->Length);
+    RtlCopyMemory(reinterpret_cast<PUCHAR>(buffer) + service->Length, suffix, sizeof(suffix));
+    UNICODE_STRING path, name;
+    RtlInitUnicodeString(&path, buffer);
+    RtlInitUnicodeString(&name, L"AllowUntestedControllers");
+    OBJECT_ATTRIBUTES attributes;
+    InitializeObjectAttributes(&attributes, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+                               nullptr, nullptr);
+    HANDLE key{};
+    if (!NT_SUCCESS(ZwOpenKey(&key, KEY_QUERY_VALUE, &attributes))) {
+        return;
+    }
+    struct {
+        KEY_VALUE_PARTIAL_INFORMATION header;
+        UCHAR room[sizeof(ULONG)];
+    } value{};
+    ULONG length{}, number{};
+    if (NT_SUCCESS(ZwQueryValueKey(key, &name, KeyValuePartialInformation, &value, sizeof(value),
+                                   &length)) &&
+        value.header.Type == REG_DWORD && value.header.DataLength == sizeof(number)) {
+        RtlCopyMemory(&number, value.header.Data, sizeof(number));
+        InterlockedExchange(&untested_allowed, number == 1);
+    }
+    ZwClose(key);
+}
 void record_attach() noexcept {
     InterlockedIncrement(&attached);
     record_summary();
@@ -531,10 +568,20 @@ NTSTATUS start_device(Device &device, PCM_RESOURCE_LIST raw,
     auto handoff = HandoffResult::invalid;
     ULONG attempts{};
     bool unretired{};
-    if (!read_pci(device, 0, pci, sizeof(pci)) ||
-        !decode_pci_snapshot(pci, sizeof(pci), device.identity, bar) ||
-        !match_board_controller(device.identity) ||
-        !assigned_resources(raw, translated, bar, physical, bytes, device.interrupt)) {
+    const bool decoded = read_pci(device, 0, pci, sizeof(pci)) &&
+                         decode_pci_snapshot(pci, sizeof(pci), device.identity, bar);
+    const auto admission = decoded ? classify_controller(device.identity) : Admission::untested;
+    if (!decoded) {
+        status = STATUS_DEVICE_CONFIGURATION_ERROR;
+    } else if (!admitted(admission, InterlockedCompareExchange(&untested_allowed, 0, 0) != 0)) {
+        // Not a controller this driver has run on, and the user has not asked
+        // for it. Nothing of this device is mapped or written.
+        DbgPrint("XHCI_NATIVE PCI=%04x:%04x SUBSYS=%04x:%04x REV=%02x is untested and stays "
+                 "off; set Parameters\\AllowUntestedControllers=1 to try it\n",
+                 device.identity.vendor, device.identity.device, device.identity.subsystem_vendor,
+                 device.identity.subsystem_device, device.identity.revision);
+        status = STATUS_NOT_SUPPORTED;
+    } else if (!assigned_resources(raw, translated, bar, physical, bytes, device.interrupt)) {
         status = STATUS_DEVICE_CONFIGURATION_ERROR;
     } else {
         stage = StartStage::mapping;
@@ -555,10 +602,11 @@ NTSTATUS start_device(Device &device, PCM_RESOURCE_LIST raw,
             if (handoff != HandoffResult::complete) {
                 status = STATUS_DEVICE_NOT_READY;
             } else {
-                DbgPrint("XHCI_NATIVE PCI=%04x:%04x version=%04x slots=%u ports=%u contexts=%u "
-                         "scratchpads=%u INTx=%lu\n",
+                DbgPrint("XHCI_NATIVE PCI=%04x:%04x %s version=%04x slots=%u ports=%u "
+                         "contexts=%u scratchpads=%u INTx=%lu\n",
                          device.identity.vendor, device.identity.device,
-                         device.capabilities.version, device.capabilities.slots,
+                         admission_name(admission), device.capabilities.version,
+                         device.capabilities.slots,
                          device.capabilities.ports, device.capabilities.context_bytes,
                          device.capabilities.scratchpad_buffers,
                          device.interrupt.u.Interrupt.Vector);

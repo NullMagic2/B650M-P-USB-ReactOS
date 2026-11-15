@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
 Module: xhci.core.controller
-Purpose: Validate exact board profiles, PCI snapshots and bounded xHCI capability reads.
+Purpose: Classify controllers by tested profile; validate PCI snapshots and capability reads.
 Created: 2026-10-25
 Architecture: Allocation-free values; native code will own assigned mappings and DMA.
 */
@@ -33,14 +33,31 @@ struct RegisterBar {
     std::uint64_t pci_address{};
     bool is_64_bit{};
 };
-// Read-only static profile. Exact subsystem and revision are admission criteria,
-// not motherboard authentication. No unverified AMD quirk is enabled here.
+// Read-only static profile: an identity that ran on real hardware. It names a
+// controller, not a motherboard; four of the five sit in the processor.
 const BoardController *match_board_controller(const PciIdentity &identity) noexcept;
+// The profile with the same vendor and device, whatever the subsystem and
+// revision. The subsystem is a label the board maker writes, so this is the
+// same controller model on another board or stepping.
+const BoardController *match_controller_model(const PciIdentity &identity) noexcept;
+// How far a decoded xHCI controller is trusted to start.
+enum class Admission : std::uint8_t {
+    tested,   // exact profile
+    family,   // same model as a profile, other subsystem or revision
+    untested, // any other xHCI controller
+};
+Admission classify_controller(const PciIdentity &identity) noexcept;
+// Tested and family controllers always start. An untested one starts only
+// when the user has switched that on; nothing enables it by default.
+constexpr bool admitted(Admission admission, bool allow_untested) noexcept {
+    return admission != Admission::untested || allow_untested;
+}
+const char *admission_name(Admission admission) noexcept;
 std::size_t board_controller_count() noexcept;
 const BoardController *board_controller_at(std::size_t index) noexcept;
 
 // First 64 readable type-0 PCI bytes only. Never probes a BAR by writing it.
-// Outputs are cleared on failure; generic xHCI decoding does not imply admission.
+// Outputs are cleared on failure; decoding alone does not admit a controller.
 bool decode_pci_snapshot(const std::uint8_t *bytes, std::size_t length, PciIdentity &identity,
                          RegisterBar &bar) noexcept;
 

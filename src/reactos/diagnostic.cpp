@@ -37,10 +37,11 @@ extern "C" NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING pat
                 if (xhci::decode_pci_snapshot(bytes, sizeof(bytes), identity, bar)) {
                     const auto *profile = xhci::match_board_controller(identity);
                     DbgPrint("XHCI_DIAGNOSTIC %02lx:%02lx.%lx PCI=%04x:%04x SUBSYS=%04x:%04x "
-                             "REV=%02x profile=%s BAR=%I64x\n",
+                             "REV=%02x profile=%s admission=%s BAR=%I64x\n",
                              bus, device, function, identity.vendor, identity.device,
                              identity.subsystem_vendor, identity.subsystem_device,
                              identity.revision, profile ? profile->name : "unreviewed",
+                             xhci::admission_name(xhci::classify_controller(identity)),
                              bar.pci_address);
                     if (profile) {
                         ++matches;

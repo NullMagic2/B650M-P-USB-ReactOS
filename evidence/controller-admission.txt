@@ -1,0 +1,68 @@
+Controller admission, 2026-11-15
+
+Scope
+  Which xHCI controllers the driver starts. Until v0.3.0 it started only five
+  exact PCI identities (vendor, device, subsystem and revision). That check
+  was never a motherboard check: four of the five controllers are in the
+  processor (Ryzen 7 8700G), and three of the five identities carry generic
+  AMD or ASMedia subsystem values that other boards share.
+
+Rule now in the source
+  tested    exact identity of one of the five; starts.
+  family    same vendor and device, any subsystem or revision; starts.
+  untested  any other xHCI controller; the start request fails with
+            STATUS_NOT_SUPPORTED (C00000BB) before any register is mapped or
+            written, unless Services\xhci\Parameters\AllowUntestedControllers
+            is the REG_DWORD 1 when the driver loads.
+  src/core/controller.cpp classifies; src/reactos/resources.cpp reads the
+  value in DriverEntry and decides in start_device. The INF and the USB boot
+  policy list the exact identities, PCI\VEN_1022&DEV_xxxx&CC_0C0330 for the
+  family and PCI\CC_0C0330 for the rest (src/tools/package_provider.cpp). The
+  installer catalog binds present devices by the family form, which the
+  ReactOS PCI driver reports as a hardware ID.
+  The firmware hand-off steps (halt every running xHCI, silence stuck
+  interrupt pins, bridge forwarding, AMD IOMMU release) were already keyed to
+  the condition each one finds and are unchanged.
+
+Host checks
+  Eight suites pass with address and undefined-behaviour sanitizers. The
+  controller suite covers: each tested identity; each with a changed
+  subsystem or revision (family); the same device number under another vendor
+  (untested); 1022:15B6 and the emulator's 1B36:000D (untested); and the
+  switch logic. xhci_inventory on the tested machine reports all five
+  controllers as tested.
+
+Emulator, QEMU/KVM, ReactOS USB-root image, one qemu-xhci (1B36:000D), system
+disk as USB storage, one UAS disk, one keyboard. The driver was a delivery
+build (no XHCI_VIRTUAL_TEST_CONTROLLER), so that controller is in the
+untested group.
+  1. Switch set to 1: ReactOS booted from USB to the desktop and ran its
+     start-up script. Saved counters: stage 9 (started), 7837 interrupts,
+     none polled, no fault. On the UAS disk 1 MiB, 64 KiB and 4 KiB
+     sequential reads and 2000 random reads completed and a 32 MiB written
+     file read back identical. The script then deleted the Parameters key.
+  2. No Parameters key: the boot stopped on the boot bridge's report with
+       xhci.sys: attached=1 starts=1 bus failures=0 halted=0
+       000d stage=2 nt=c00000bb handoff=001 wait=0 tries=0
+     that is, the start was refused at the resource stage, no firmware
+     controller was halted and no hand-off was attempted. The start-up
+     script did not run.
+  The binary committed differs from the one booted by a comment and a line
+  break in the source; the two files differ in four header bytes.
+
+Not verified
+  - The tested identities on the real board with this build. Their path
+    through start_device is the same code as before plus the classification;
+    it has not been booted on the board.
+  - Any family or untested controller on real hardware, including this board
+    with another processor family.
+  - The installer with the new INF and catalog, and ReactOS binding an
+    untested controller from the staged INF by its class ID.
+  - A value other than a missing key (wrong type, other numbers) at run time;
+    covered only by reading the code.
+
+Known consequence
+  On a machine where some controllers start and others are refused, the
+  refused ones are still halted by the hand-off of the first that starts, so
+  their ports go quiet, firmware keyboard emulation included. v0.3.0 behaves
+  the same way.

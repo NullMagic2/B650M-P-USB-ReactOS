@@ -45,7 +45,9 @@ Native driver build (Linux, i686-w64-mingw32 GCC13)
   GCC13/MinGW i386 compilation is verified; MSVC compilation is not verified.
 
 Scope
-  Exact reviewed MSI PRO B650M-P PCI profiles and ReactOS i386 system-file hashes.
+  Five tested PCI profiles (MSI PRO B650M-P with a Ryzen 7 8700G), the same
+  controller models in other variants, and any other xHCI controller behind an
+  explicit switch (packaging/INSTALL.txt); ReactOS i386 system-file hashes.
   The installer rejects unknown baseline files and does not install the experimental
   PnP kernel patch required for the validated physical unplug/reconnect result.
   Physical motherboard USB-root boot reached the desktop on 2026-11-14 through

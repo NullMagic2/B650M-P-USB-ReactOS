@@ -4,7 +4,7 @@ Welcome! This project makes the USB ports of the **MSI PRO B650M-P (MS-7E27)** m
 
 ReactOS does not yet know how to talk to the USB controllers of a modern AMD board, so on its own your keyboard, mouse and USB drives stay silent. The driver in this repository fills that gap. It also lets the board start ReactOS straight from a USB stick, all the way to the desktop.
 
-The driver is deliberately picky. It only starts on the five USB controllers of this board (AMD `1022:43F7`, `1022:15B9`, `1022:15BA`, `1022:15C0` and `1022:15C1`), and only on the board revisions that were actually checked. On any other hardware it simply stays out of the way. It is made for ReactOS; Windows and 64-bit ReactOS are not supported.
+The driver is careful about where it runs. It starts by itself on the five USB controller models it was tested with (AMD `1022:43F7`, `1022:15B9`, `1022:15BA`, `1022:15C0` and `1022:15C1`), which is what this board has with a Ryzen 7 8700G. Four of the five live in the processor, so the same board with another processor family has different ones. Any other USB 3 (xHCI) controller is not started unless you switch it on yourself; [packaging/INSTALL.txt](packaging/INSTALL.txt) explains how, and what to keep in mind. It is made for ReactOS; Windows and 64-bit ReactOS are not supported.
 
 ## Getting started
 
@@ -52,6 +52,7 @@ This is a young project, tested on one board with one USB stick. Here is an hone
 **Good to know**
 
 - ReactOS sees 1 GiB of memory when started with the included boot loader. That limit is what allows the 32-bit loader to work on a machine with a lot of RAM.
+- The switch for untested controllers is in the source and will be in the next release. The current download (v0.3.0) starts only on the exact five controllers of the tested machine.
 - Restart can freeze on this board, while Shut down works. The cause is in ReactOS's own restart code, not in these drivers.
 - Installing programs onto a slow USB stick is slow. Running them afterwards is fine.
 - A keyboard was sometimes not recognised in Linux after a ReactOS session until it was replugged. The cause is unknown.

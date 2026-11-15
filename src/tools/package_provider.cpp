@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
 Module: xhci.tools.package_provider
-Purpose: Produce an exact-board provider catalog for the existing shared installer.
+Purpose: Produce the provider catalog and INFs for the existing shared installer.
 Created: 2026-10-25
 Architecture: Host-only payload policy; shared GuestPackageSetup owns all installation.
 */
@@ -56,6 +56,38 @@ std::string identity(const xhci::PciIdentity &id) {
     std::snprintf(bytes, sizeof(bytes), "PCI\\VEN_%04X&DEV_%04X&SUBSYS_%04X%04X&REV_%02X",
                   id.vendor, id.device, id.subsystem_device, id.subsystem_vendor, id.revision);
     return bytes;
+}
+// The same controller model whatever its subsystem and revision. The ReactOS
+// PCI bus driver reports this form as a hardware ID, so the installer's
+// present-device search finds it.
+std::string model_identity(const xhci::PciIdentity &id) {
+    char bytes[64]{};
+    std::snprintf(bytes, sizeof(bytes), "PCI\\VEN_%04X&DEV_%04X&CC_0C0330", id.vendor, id.device);
+    return bytes;
+}
+// Any xHCI controller, as the bus driver's compatible ID. The driver refuses
+// these unless the user sets Parameters\AllowUntestedControllers.
+constexpr char any_xhci_identity[] = "PCI\\CC_0C0330";
+struct Models {
+    std::vector<std::string> ids, names;
+};
+// INF models in match order: tested identities, their models in any variant,
+// then every other xHCI controller.
+Models controller_models() {
+    Models models;
+    for (std::size_t i = 0; i < xhci::board_controller_count(); ++i) {
+        const auto *profile = xhci::board_controller_at(i);
+        models.ids.push_back(identity(profile->identity));
+        models.names.emplace_back(profile->name);
+    }
+    for (std::size_t i = 0; i < xhci::board_controller_count(); ++i) {
+        const auto *profile = xhci::board_controller_at(i);
+        models.ids.push_back(model_identity(profile->identity));
+        models.names.push_back(std::string(profile->name) + " (untested variant)");
+    }
+    models.ids.emplace_back(any_xhci_identity);
+    models.names.emplace_back("xHCI USB controller (untested, off unless enabled)");
+    return models;
 }
 bool write(const fs::path &path, const std::string &text) {
     std::ofstream output(path, std::ios::binary);
@@ -171,8 +203,7 @@ bool boot_metadata(const fs::path &root, std::uint32_t signature, std::uint32_t 
          {"usbhub", "usbstor", "disk", "fastfat", "hidusb", "kbdhid", "mouhid"}) {
         text << "HKLM,\"" << system << "Services\\" << service << "\",\"Start\",0x00010001,0\n";
     }
-    for (std::size_t i = 0; i < xhci::board_controller_count(); ++i) {
-        auto id = identity(xhci::board_controller_at(i)->identity);
+    for (auto id : controller_models().ids) {
         std::replace(id.begin(), id.end(), '\\', '#');
         text << "HKLM,\"" << system << "Control\\CriticalDeviceDatabase\\" << id
              << "\",\"Service\",0,\"xhci\"\n"
@@ -223,13 +254,9 @@ int main(int argc, char **argv) {
             error) {
             return 1;
         }
-        std::vector<std::string> ids, names;
-        for (std::size_t i = 0; i < xhci::board_controller_count(); ++i) {
-            const auto *profile = xhci::board_controller_at(i);
-            ids.push_back(identity(profile->identity));
-            names.emplace_back(profile->name);
-        }
-        return write(directory / "xhci-boot.inf", inf("xhci.sys", "xhci", ids, names, 0, true)) &&
+        const auto models = controller_models();
+        return write(directory / "xhci-boot.inf",
+                     inf("xhci.sys", "xhci", models.ids, models.names, 0, true)) &&
                        write(directory / "xhci-roots.inf",
                              inf("usbhub.sys", "usbhub", {"USB\\ROOT_HUB20", "USB\\ROOT_HUB30"},
                                  {"xHCI USB 2 Root Hub", "xHCI USB 3 Root Hub"}, 0, true))
@@ -278,14 +305,16 @@ int main(int argc, char **argv) {
         copy_payload(shared / "notices/mingw-w64-copyright.txt", root / "notices/MinGW.txt") &&
         copy_payload(shared / "notices/gcc-runtime-copyright.txt", root / "notices/GCC.txt") &&
         copy_payload(source_archive, root / "source/complete-source.tar.gz");
-    std::vector<std::string> board_ids, board_names;
+    // The installer binds present devices by model, which covers the tested
+    // identities and their variants; both always start. Other xHCI controllers
+    // are matched by the INF alone, since they may be refused by the driver.
+    std::vector<std::string> board_ids;
     for (std::size_t i = 0; i < xhci::board_controller_count(); ++i) {
-        const auto *profile = xhci::board_controller_at(i);
-        board_ids.push_back(identity(profile->identity));
-        board_names.emplace_back(profile->name);
+        board_ids.push_back(model_identity(xhci::board_controller_at(i)->identity));
     }
+    const auto models = controller_models();
     const std::vector<std::string> root_ids{"USB\\ROOT_HUB20", "USB\\ROOT_HUB30"};
-    ok = ok && write(root / "xhci/xhci.inf", inf("xhci.sys", "xhci", board_ids, board_names, 3));
+    ok = ok && write(root / "xhci/xhci.inf", inf("xhci.sys", "xhci", models.ids, models.names, 3));
     ok = ok && copy_payload(compat / "usbhub-xhci-i386.sys", root / "usbhub/usbhub.sys") &&
          copy_payload(compat / "usbstor-xhci-i386.sys", root / "usbstor/usbstor.sys") &&
          copy_payload(compat / "disk-xhci-i386.sys", root / "disk/disk.sys") &&
@@ -334,6 +363,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     std::printf(
-        "Provider staged: 5 exact PCI profiles, 2 logical roots, 4 real compatibility modules.\n");
+        "Provider staged: 5 tested PCI profiles and their models, any-xHCI opt-in entry, 2 logical "
+        "roots, 4 real compatibility modules.\n");
     return 0;
 }

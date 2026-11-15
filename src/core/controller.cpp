@@ -52,6 +52,25 @@ const BoardController *match_board_controller(const PciIdentity &identity) noexc
     }
     return nullptr;
 }
+const BoardController *match_controller_model(const PciIdentity &identity) noexcept {
+    for (const auto &controller : controllers) {
+        if (controller.identity.vendor == identity.vendor &&
+            controller.identity.device == identity.device) {
+            return &controller;
+        }
+    }
+    return nullptr;
+}
+Admission classify_controller(const PciIdentity &identity) noexcept {
+    return match_board_controller(identity)   ? Admission::tested
+           : match_controller_model(identity) ? Admission::family
+                                              : Admission::untested;
+}
+const char *admission_name(Admission admission) noexcept {
+    return admission == Admission::tested   ? "tested"
+           : admission == Admission::family ? "family"
+                                            : "untested";
+}
 std::size_t board_controller_count() noexcept {
     return sizeof(controllers) / sizeof(controllers[0]);
 }

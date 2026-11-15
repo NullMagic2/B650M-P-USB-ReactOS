@@ -51,6 +51,9 @@ struct Device {
 };
 // All resource lifecycle calls run at PASSIVE_LEVEL under lifecycle_mutex.
 NTSTATUS start_device(Device &, PCM_RESOURCE_LIST raw, PCM_RESOURCE_LIST translated) noexcept;
+// PASSIVE_LEVEL, DriverEntry only. Reads whether the user allows controllers
+// outside the tested profiles; service is the driver's registry path.
+void load_admission_policy(PCUNICODE_STRING service) noexcept;
 // PASSIVE_LEVEL. Count device attachments and start requests for the boot
 // bridge's failure report; lower is the bus driver's own start status.
 void record_attach() noexcept;

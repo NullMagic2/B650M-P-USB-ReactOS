@@ -4,7 +4,7 @@ Created: 2026-10-25
 Architecture: The shared Qemu-Lightning NT5 engine owns installation and recovery.
 
 Run XHCI-ReactOS-Setup-i386.exe inside the matching native ReactOS i386 system.
-This one offline executable carries the operational HCD, exact five board PCI
+This one offline executable carries the operational HCD, the five tested PCI
 profiles, USB2/USB3 root INFs, genuine patched USBHUB/USBSTOR/disk/HIDUSB modules,
 separate GPL/MS-PL/compiler notices. Project source and compatibility patches
 are available at https://github.com/NullMagic2/B650M-P-USB-ReactOS. No manager,
@@ -14,7 +14,8 @@ The original baseline hashes are explicit. Unknown system files and unreviewed
 upgrades are refused. Three boot-start class modules retain their actual service,
 image and loaded-module checks. The HIDUSB compatibility update preserves real
 cancelled interrupt URBs; it does not change their NT or USBD error into success.
-The controller INF binds only reviewed AMD subsystem/revision identities.
+The controller INF and the driver sort xHCI controllers into three groups; see
+"Hardware the driver starts on" below.
 Its canonical service is xhci, matching xhci.sys: the genuine ReactOS boot driver
 initializer derives the service key from the loaded module basename. The
 read-only diagnostic SYS is never a controller-installation payload.
@@ -27,6 +28,43 @@ the preserved executable and payloads under SystemRoot\QemuLightning\GuestPackag
 the original USB/CD/package may be removed. Restart retries are bounded to three.
 Present devices require the real installed-INF hash and fresh PnP start status.
 Absent devices are reported as waiting; setup does not fabricate a controller.
+
+Hardware the driver starts on
+  tested    The five PCI identities that ran on the MSI PRO B650M-P with a
+            Ryzen 7 8700G: 1022:43F7, 15B9, 15BA, 15C0 and 15C1 with that
+            machine's subsystem and revision values. Four of the five are in
+            the processor, not on the board. They start by themselves.
+  family    The same vendor and device with another subsystem or revision,
+            which is the same controller model on another board or stepping.
+            They start by themselves. None has been tried.
+  untested  Every other xHCI controller (PCI class 0C0330), including those
+            this board has with a different processor family. The driver
+            refuses to start them (STATUS_NOT_SUPPORTED) and maps and writes
+            nothing, so the firmware keeps them, unless this value exists
+            when the driver loads:
+              reg add HKLM\SYSTEM\CurrentControlSet\Services\xhci\Parameters /v AllowUntestedControllers /t REG_DWORD /d 1
+            Restart afterwards. Delete the value to switch it off again. Any
+            other type or number counts as off.
+  Read this before switching it on. Once one controller starts, the driver
+  halts every xHCI controller the firmware left running, because they share
+  interrupt lines; firmware keyboard and mouse emulation then ends on all of
+  them, including controllers the driver refuses. It also turns off an AMD
+  IOMMU that the firmware left translating, disables the pin interrupt of
+  other devices stuck asserting the controller's line, and enables forwarding
+  on the bridges above the controller. Each step acts only when it finds its
+  condition, but all were written for the tested machine. Keep a second way
+  into the computer and a backup.
+  Setup installs the tested and family controllers that are present and checks
+  that they started. It does not set the switch and does not wait for untested
+  controllers; ReactOS binds those from the staged INF the next time it
+  installs devices. The USB boot policy generated for a USB-root image lists
+  the same three groups.
+  Checked in the emulator on 2026-11-15 with an unmodified delivery build: the
+  QEMU xHCI controller, which is in the untested group, was refused without
+  the switch and booted ReactOS from USB with it; see
+  evidence/controller-admission.txt. No family or untested controller has run
+  on real hardware. The v0.3.0 release predates this: its driver starts only
+  the five exact identities and has no switch.
 
 Use the same preserved executable with:
   --extract    export verified runtime payloads to a new chosen directory
