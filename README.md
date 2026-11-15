@@ -24,23 +24,9 @@ On 2026-11-14 the board booted ReactOS to the desktop from a USB stick through t
 
 The sequence of failures and fixes is in [evidence/physical-usb-root-boot.txt](evidence/physical-usb-root-boot.txt).
 
-## v0.3.0: USB speed, UAS and the interrupt handler
-
-After v0.2.0 the board felt very slow from USB. Three things changed:
-
-- **Throughput.** The driver copied data through uncached buffers, allocated a buffer per transfer and could wrongly fall back to checking for completed transfers once per clock tick; the storage driver limited each command to 64 KiB. These are fixed and commands may now be 1 MiB. In the emulator 64 KiB sequential reads went from 28 to about 267 MB/s. See [evidence/usb-throughput.txt](evidence/usb-throughput.txt).
-- **USB Attached SCSI.** `xhci.sys` supports xHCI streams and the patched `usbstor.sys` uses UAS when a SuperSpeed device offers it and the controller has streams; everything else stays on bulk-only transport. One command is sent at a time, so the gain is modest: about 20% on sustained 1 MiB reads in the emulator and none on small reads.
-- **Interrupt handler.** An event arriving between the handler's two acknowledgements left the interrupt line asserted and unclaimed, which could flood the system with interrupts. The handler now claims on the interrupter's own pending bit.
-
-On 2026-11-15 the board ran from USB with these modules. The counters the boot bridge saves show all five controllers working on interrupts, none polling and none flooded; `1022:43F7`, which polled under v0.2.0, handled about 211,000 interrupts in 11.5 minutes. A UAS-capable enclosure was attached to a SuperSpeed port during that session and its disk was enumerated, but which transport it used was not recorded, and no throughput was measured on the board. See [evidence/usb-attached-scsi.txt](evidence/usb-attached-scsi.txt).
-
-In that session installing a program was slow while running it was fast, menus sometimes opened slowly, and ReactOS hung when asked to restart. Measured from Linux on the same port, the test stick itself writes only about 70 separate 4 KiB blocks per second (9 small files per second) against 137 MB/s for reads, which accounts for slow installs; the restart hang is not diagnosed.
-
-Release v0.3.0 has two downloads. The installer updates `xhci.sys` and the four class drivers of an installed system. `B650M-P-USB-ReactOS-boot-files-i386.zip` holds the exact loader, boot bridge and drivers of the 2026-11-15 session, for updating a prepared USB system from another operating system; its READ-ME lists where each file goes. Installing or rolling back with the installer was not exercised in ReactOS.
-
 ## XTX 7900 setup wizard
 
-`src/tools/gpu_setup_wizard.cpp` is a graphical front end for `radeonctl.exe`, the command-line installer of a separate Radeon RX 7900 driver package that image assembly copies to the "XTX 7900 drivers" desktop folder. Build it with `-DXHCI_GPU_SETUP_WIZARD=ON` (target `xhci_gpu_setup_wizard`) and place the result beside `radeonctl.exe` as `Setup.exe`. It runs `radeonctl` commands and shows their output; it changes nothing itself. On the board it installed the driver, and the screen resolution could be changed afterwards. The Radeon package itself (miniport, display driver, `radeonctl`) is published separately as [RX7900-ReactOS](https://github.com/NullMagic2/RX7900-ReactOS), which now carries the installer changes recorded here in `compat/rx7900/radeonctl-board-fixes.patch`.
+For the user convenience, we include a setup wizard.
 
 Still open: UAS is not confirmed on the board and has no command queueing or task management; ReactOS hung on restart in the last session; ReactOS sees 1 GiB of RAM; MYSTIC LIGHT lighting control does not work; a keyboard was sometimes absent in Linux after a ReactOS session until replugged, cause unknown; and only one board and one USB stick were tested.
 
