@@ -81,15 +81,64 @@ controller driver was a delivery build with the untested-controller switch on.
   formatting; the rebuilt file differs in seven bytes (time stamp, checksum
   and three source line numbers) and repeated 1 to 4 with the same results.
 
+Both directions and the faster speeds, same day
+  QEMU has no device with an isochronous IN endpoint and none above full
+  speed, so tests/isoch/redir_device.py supplies one: a small program that
+  speaks the usbredir protocol to QEMU's usb-redir device and presents a
+  vendor-specific device with one isochronous OUT and one isochronous IN
+  endpoint at full, high or SuperSpeed, with a chosen bInterval and payload
+  per service interval. It checks every OUT packet against the client's
+  counting pattern as it arrives and feeds the IN endpoint numbered packets
+  (a four-byte packet number, then a byte ramp) at the endpoint's nominal
+  rate, every tenth one 16 bytes short. The test client was extended to
+  stream in both directions at once and to check each received packet's
+  number, length and contents. Controller driver: the delivery build with
+  the hub change of evidence/hub-enumeration.txt (sha256 c1c479e9...).
+  Each row is one boot: a three-second run in both directions, then the
+  drop, cancel and restart phases on both endpoints.
+
+    speed  bInterval  bytes  packets/s  OUT at device        IN at client
+    full       1        192     1000     3000 in 3.000 s      2939 + 61 empty
+    high       4       1024     1000     3000 in 2.999 s      2879 + 121 empty
+    high       1       1024     8000    24000 in 3.006 s     23519 + 481 empty
+    high       1       3072     8000    24000 in 3.012 s     23519 + 481 empty
+    super      1       1024     8000    24000 in 3.005 s     23938 + 62 empty
+    super      3       3072     2000     6000 in 3.000 s      5980 + 20 empty
+    super      4       6144     1000     3000 in 2.999 s      2984 + 16 empty
+
+  In every row: no request and no packet reported failed in either
+  direction; every OUT packet arrived whole, in order and at the full
+  payload size, with no sequence break inside a run; every IN packet that
+  carried data had the right contents and the next packet number, with
+  lengths reported from payload - 16 to payload; the queued requests all
+  came back when the setting was dropped, the cancelled request and those
+  behind it returned cancelled, and both endpoints streamed again
+  afterwards. The packet rates confirm the interval encoding at each speed.
+  3072 bytes at high speed is three transactions per microframe; 3072 and
+  6144 at SuperSpeed are bursts of three, the second with Mult 1.
+  The empty IN packets are QEMU's: usb-redir keeps its own queue between
+  the device program and the guest and answers with no data until that
+  queue has filled (about 60 ms at the rate QEMU assumes), at the start of
+  each run. The client counts them and they carry no error.
+  The first SuperSpeed boots showed OUT packets out of order at the start
+  of a run. That was the test client, which could resubmit a completed
+  request before it had finished sending the first batch; it now hands
+  requests over strictly in the order it filled them, and every row above
+  is from the corrected client. QEMU's sound card passed again with it
+  (3000 packets, every sample in sequence, same phases).
+
 Not verified
-  - Isochronous IN (QEMU's device has no input endpoint); only the host
-    checks and the shared code path cover it.
-  - High-speed and SuperSpeed isochronous endpoints, bursts, Mult.
-  - A device behind a hub. In this emulator setup ReactOS does not enumerate
-    any device behind QEMU's hub, with this build or with the v0.3.0-era
-    driver; that is a separate, older problem and was not investigated here.
-  - Real hardware: Missed Service, ring underrun, Block Event Interrupt and
-    bandwidth errors as a real controller reports them.
+  - Real hardware: nothing here has run on a controller that keeps real
+    time. Missed Service, ring underrun, Block Event Interrupt and
+    bandwidth errors as a real controller reports them are untested, and
+    QEMU does not check the burst fields of an Isoch TRB (Transfer Burst
+    Count, Last Burst Packet Count); those have host checks only.
+  - Timing. The device program is paced by the host clock and QEMU's queue
+    hides jitter in both directions, so these runs prove data, order,
+    lengths and average rate, not that each packet met its interval.
+  - Explicit start frames, and a device whose packets fail on the wire.
+  - A device behind a high-speed or SuperSpeed hub. Behind QEMU's full-speed
+    hub the sound-card test passes (evidence/hub-enumeration.txt).
   - Any class driver. ReactOS's usbaudio source compiles from the 0.4.16
     tree. In one boot it was registered for the sound card's audio function
     by registry entries alone, without an INF: ReactOS showed its New

@@ -65,11 +65,15 @@ Booting the board from a USB stick
   The options beginning XHCI_TEST_ and XHCI_VIRTUAL_TEST_CONTROLLER are emulator
   fixtures. Never install a module built with one of them.
   XHCI_NATIVE_ISOCH_TEST=ON builds isoch-test-client-i386.sys (tests/isoch), a
-  function driver that streams a counting pattern to a USB audio device's
-  isochronous OUT endpoint and writes what the bus driver reported to
-  \SystemRoot\isotest.txt. It exists to exercise isochronous transfers in the
-  emulator, where QEMU's usb-audio device records every packet it receives
-  (pcap=FILE). It is not a sound driver and is never delivered.
+  function driver that streams a counting pattern to a device's isochronous
+  OUT endpoint, checks a numbered pattern from its isochronous IN endpoint and
+  writes what the bus driver reported to \SystemRoot\isotest.txt. It exists
+  to exercise isochronous transfers in the emulator: against QEMU's usb-audio
+  device, which records every packet it receives (pcap=FILE), and against
+  tests/isoch/redir_device.py, which plays a full, high or SuperSpeed device
+  with both directions to QEMU's usb-redir device
+  (-chardev socket,id=r,path=SOCKET -device usb-redir,chardev=r). It is not a
+  sound driver and is never delivered.
 
   The stick also needs the patched FreeLoader (compat/reactos/freeldr). Without
   its 1 GiB memory bound the stock loader cannot read the disk on machines with
