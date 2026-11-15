@@ -58,10 +58,6 @@ This is a young project, tested on one board with one USB stick. Here is an hone
 - A keyboard was sometimes not recognised in Linux after a ReactOS session until it was replugged. The cause is unknown.
 - Going back to the original drivers with the installer has not been tried in ReactOS yet.
 
-## Have a Radeon RX 7900?
-
-The graphics driver has its own home: **[RX7900-ReactOS](https://github.com/NullMagic2/RX7900-ReactOS)**. For convenience, the source of its small setup wizard lives here, in `src/tools/gpu_setup_wizard.cpp`.
-
 ## For developers
 
 You only need CMake and the MinGW i386 compiler; a full ReactOS source tree is not required.
