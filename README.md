@@ -1,44 +1,105 @@
-# USB Controllers (B650M-P) – ReactOS
+# USB for ReactOS on the MSI PRO B650M-P
 
-USB host-controller drivers tailored for **ReactOS i386** on the **MSI PRO B650M-P (MS-7E27)** motherboard. This project implements a native xHCI controller driver and integrates with the ReactOS USB hub, storage and HID stack.
+Welcome! This project makes the USB ports of the **MSI PRO B650M-P (MS-7E27)** motherboard work in **[ReactOS](https://reactos.org)**, the free operating system that runs Windows programs and drivers.
 
-[Download the installer](https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/latest)
+ReactOS does not yet know how to talk to the USB controllers of a modern AMD board, so on its own your keyboard, mouse and USB drives stay silent. The driver in this repository fills that gap. It also lets the board start ReactOS straight from a USB stick, all the way to the desktop.
 
-Download **B650M-P-USB-ReactOS-Setup-i386.exe**, copy it into ReactOS, and run it. One offline installer includes the controller driver, required USB compatibility modules, recovery support and license notices. Source is maintained separately in this repository. Follow the installer through its required restarts; no Qemu-Lightning manager or separate prerequisite download is needed.
+**[Download the latest release](https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/latest)**
 
-The installer checks the reviewed ReactOS system-file hashes and exact controller identities. Other ReactOS builds are refused rather than replacing unknown system files. These drivers are tailored for ReactOS; Windows compatibility is not established, and interfaces and supported builds are subject to change.
+## What you get
 
-Supported PCI device IDs are AMD `1022:43F7`, `1022:15B9`, `1022:15BA`, `1022:15C0` and `1022:15C1`, restricted to the reviewed motherboard subsystem/revision profiles. See `src/core/controller.cpp` for the exact matches. The internal driver/service name remains `xhci.sys` / `xhci`.
+- **Working USB ports.** Keyboards, mice, hubs, flash drives and external disks, on the USB 2 and USB 3 ports alike.
+- **ReactOS from a USB stick.** The real board boots from USB to the ReactOS desktop.
+- **Support for fast disk enclosures.** Drives that offer USB Attached SCSI (UAS) on a USB 3 port can use it.
+- **A careful installer.** It checks your system before changing anything and keeps the original files, so there is a way back.
 
-The current package supports control, bulk and interrupt transfers, USB2/USB3 logical root hubs, storage reads/writes and cache flushes over bulk-only transport, and USB Attached SCSI (UAS) on SuperSpeed devices with one command at a time. Isochronous transfers, UAS command queueing and general suspend/hibernation are outside this release's scope.
+## Is this for you?
 
-Selected physical-controller storage read/write, flush and restart/readback tests passed. **Known issue:** physical unplug/reconnect recovery required the ReactOS PnP kernel patch under `compat/reactos/pnp*`; that kernel change is not installed by this package. The full installer install/rollback runtime matrix has not been completed.
+It is, if you have this exact motherboard and want to run the 32-bit (i386) version of ReactOS on it.
 
-## Booting the real board from USB
+The driver is deliberately picky. It only starts on the five USB controllers of this board (AMD `1022:43F7`, `1022:15B9`, `1022:15BA`, `1022:15C0` and `1022:15C1`), and only on the board revisions that were actually checked. On any other hardware it simply stays out of the way. It is made for ReactOS; Windows and 64-bit ReactOS are not supported.
 
-On 2026-11-14 the board booted ReactOS to the desktop from a USB stick through the legacy (CSM) boot entry, with all five controllers started. That needed changes in three places, all in this repository:
+## Getting started
 
-- **FreeLoader** (`compat/reactos/freeldr`): with about 127 GiB of RAM the 32-bit loader placed its page table over firmware memory and every BIOS disk read then timed out. The loader now uses the first GiB only, so ReactOS sees 1 GiB.
-- **`xhci.sys`**: the firmware leaves the AMD IOMMU translating and its own USB stack running. The driver releases the IOMMU, halts firmware-owned controllers, takes ownership when the BIOS handoff goes unanswered, and polls when the shared interrupt line is unusable. Root-hub handling was corrected for the `1022:43F7` controller.
-- **`xhciboot.sys` and `hidusb.sys`**: the boot bridge admits removable boot media and shows a red on-screen report when a start or assertion fails. HIDUSB refuses the board's MYSTIC LIGHT report descriptor, which the ReactOS HID parser cannot hold.
+Pick the situation that matches yours. Both downloads are on the [release page](https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/latest).
 
-The sequence of failures and fixes is in [evidence/physical-usb-root-boot.txt](evidence/physical-usb-root-boot.txt).
+### ReactOS is already installed on the computer
 
-## XTX 7900 setup wizard
+1. Download **B650M-P-USB-ReactOS-Setup-i386.exe**.
+2. Copy it into ReactOS and run it.
+3. Follow it through the restarts it asks for.
 
-For the user convenience, we include a setup wizard.
+Everything it needs is inside that one file, so there is nothing else to download. Because it replaces system files, the installer first compares your ReactOS with the build it was prepared for. If they differ, it stops and changes nothing. In that case you can still build the drivers yourself; see [For developers](#for-developers).
 
-Still open: UAS is not confirmed on the board and has no command queueing or task management; ReactOS hung on restart in the last session; ReactOS sees 1 GiB of RAM; MYSTIC LIGHT lighting control does not work; a keyboard was sometimes absent in Linux after a ReactOS session until replugged, cause unknown; and only one board and one USB stick were tested.
+### You run ReactOS from a USB stick
 
-Build instructions are in [GETTING_STARTED.txt](GETTING_STARTED.txt); installation and recovery options are in [packaging/INSTALL.txt](packaging/INSTALL.txt). Run the installer with `--extract` to export its verified runtime payloads. No source archive or full ReactOS tree is embedded in the installer.
+Download **B650M-P-USB-ReactOS-boot-files-i386.zip**. It holds the boot loader and the drivers exactly as they ran on the real board, for updating a ReactOS USB system from another operating system. The READ-ME inside says where each file goes.
 
-Build the native driver with:
+Two tips for this board:
+
+- Choose the stick's **legacy (CSM)** entry in the firmware boot menu.
+- Use the normal ReactOS boot entry. If a driver fails to start, a red screen tells you what happened.
+
+## What works, and what doesn't yet
+
+This is a young project, tested on one board with one USB stick. Here is an honest picture.
+
+**Works on the real board**
+
+- Starting ReactOS from a USB stick and reaching the desktop.
+- All five USB controllers, on both the USB 2 and USB 3 ports.
+- Keyboard and mouse.
+- Reading from and writing to USB storage.
+
+**Works in the emulator, not yet confirmed on the board**
+
+- USB Attached SCSI (UAS). A UAS enclosure was plugged into the board and its disk appeared, but which mode it used was not recorded.
+
+**Not there yet**
+
+- Sound devices and webcams (isochronous transfers).
+- Sleep and hibernation.
+- Recovering cleanly when a device is unplugged and plugged back in. This needs a ReactOS kernel change (`compat/reactos/pnp*`) that the installer does not apply.
+- MYSTIC LIGHT lighting control.
+
+**Good to know**
+
+- ReactOS sees 1 GiB of memory when started with the included boot loader. That limit is what allows the 32-bit loader to work on a machine with a lot of RAM.
+- Restart can freeze on this board, while Shut down works. The cause is in ReactOS's own restart code, not in these drivers.
+- Installing programs onto a slow USB stick is slow. Running them afterwards is fine.
+- A keyboard was sometimes not recognised in Linux after a ReactOS session until it was replugged. The cause is unknown.
+- Going back to the original drivers with the installer has not been tried in ReactOS yet.
+
+## Have a Radeon RX 7900?
+
+The graphics driver has its own home: **[RX7900-ReactOS](https://github.com/NullMagic2/RX7900-ReactOS)**. For convenience, the source of its small setup wizard lives here, in `src/tools/gpu_setup_wizard.cpp`.
+
+## For developers
+
+You only need CMake and the MinGW i386 compiler; a full ReactOS source tree is not required.
 
 ```sh
 cmake -S . -B Binaries/.build/native -DXHCI_NATIVE_CONTROLLER=ON
 cmake --build Binaries/.build/native --target xhci_native_controller -j4
 ```
 
-The build automatically downloads the matching headers and kernel/HAL import libraries into **`dependencies/`** (about 501 KiB compressed). Only enabled optional components download extra inputs; `-DXHCI_NATIVE_LOADER=ON` fetches the FreeLoader inputs (about 883 KiB) and builds the `xhci_native_loader` target. Versions and checksums are pinned in `dependencies.lock.json`; cached files are verified and reused. A full ReactOS checkout is unnecessary for these driver targets. See `GETTING_STARTED.txt` for the Linux/MinGW prerequisites and optional class-module build.
+The build downloads the few ReactOS headers and libraries it needs (about 501 KiB) into `dependencies/`, and checks them against the versions and checksums pinned in `dependencies.lock.json`.
 
-The controller is **GPL-2.0-only**. The shared installer and ReactOS patches preserve their upstream GPL terms; the separate disk compatibility module uses MS-PL. See [LICENSE](LICENSE), [THIRD_PARTY.txt](THIRD_PARTY.txt), and the per-module notices.
+Where to read more:
+
+- [GETTING_STARTED.txt](GETTING_STARTED.txt): prerequisites, tests, and building the boot loader and the other modules.
+- [packaging/INSTALL.txt](packaging/INSTALL.txt): what the installer does, and its `--check`, `--install` and `--extract` options.
+- [ARCHITECTURE.md](ARCHITECTURE.md): how the driver is put together.
+- [evidence/](evidence): what was tested and measured, including the story of [getting the real board to boot from USB](evidence/physical-usb-root-boot.txt).
+
+## What changed in each version
+
+The [Releases page](https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases) has the notes for every version.
+
+## Questions and feedback
+
+If something does not work, or you tried this on your own board, please [open an issue](https://github.com/NullMagic2/B650M-P-USB-ReactOS/issues). Reports from real hardware are especially welcome.
+
+## Licence
+
+The controller driver is **GPL-2.0-only**. The installer and the ReactOS patches keep their upstream GPL terms, and the separate disk compatibility module uses MS-PL. See [LICENSE](LICENSE), [THIRD_PARTY.txt](THIRD_PARTY.txt) and the notices beside each module.
