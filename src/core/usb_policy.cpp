@@ -177,10 +177,13 @@ bool hub_policy(UsbSpeed speed, const std::uint8_t *descriptor, std::size_t byte
         return false;
     }
     const bool super_speed = speed >= UsbSpeed::super;
+    // A USB 2 descriptor must reach the end of DeviceRemovable. The mask after
+    // it is obsolete and some hubs shorten it (Linux v6.12 get_hub_descriptor
+    // accepts the same length).
     const unsigned bitmap_bytes = (static_cast<unsigned>(descriptor[2]) + 8) / 8;
     if ((super_speed &&
          (descriptor[0] < 12 || descriptor[1] != 0x2a || descriptor[2] > 15 || protocol != 3)) ||
-        (!super_speed && (descriptor[0] < 7 + 2 * bitmap_bytes || descriptor[1] != 0x29 ||
+        (!super_speed && (descriptor[0] < 7 + bitmap_bytes || descriptor[1] != 0x29 ||
                           protocol > 2 || (speed == UsbSpeed::full && protocol != 0)))) {
         return false;
     }

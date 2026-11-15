@@ -110,6 +110,12 @@ int main() {
     require(hub_policy(UsbSpeed::high, hub2, sizeof(hub2), 2, hub), "HS multi TT hub");
     require(hub.multi_tt && hub.tt_think_time == 3 && hub.ports == 7 && hub.power_good_ms == 100,
             "hub TT context");
+    // Eight ports with a one-byte power mask, as QEMU's hub reports it.
+    std::uint8_t hub1[]{10, 0x29, 8, 0x0a, 0, 1, 0, 0, 0, 0xff};
+    require(hub_policy(UsbSpeed::full, hub1, sizeof(hub1), 0, hub), "FS hub, short power mask");
+    require(hub.ports == 8 && !hub.multi_tt && hub.tt_think_time == 0, "FS hub has no TT");
+    hub1[0] = 8;
+    require(!hub_policy(UsbSpeed::full, hub1, sizeof(hub1), 0, hub), "DeviceRemovable cut short");
     std::uint8_t hub3[]{12, 0x2a, 4, 0, 0, 20, 0, 1, 0, 0, 0, 0};
     require(hub_policy(UsbSpeed::super, hub3, sizeof(hub3), 3, hub), "native SS hub");
     require(hub.super_speed && !hub.multi_tt && hub.tt_think_time == 0, "SS never TT");

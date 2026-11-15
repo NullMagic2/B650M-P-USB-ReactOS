@@ -1,0 +1,48 @@
+Devices behind an external hub, 2026-11-15
+
+Symptom
+  With a USB hub between the controller and a device, ReactOS started the hub
+  but never enumerated what was plugged into it. Seen in the emulator with
+  QEMU's usb-hub (full speed, eight ports) for a mouse and for a sound card,
+  with the current source and with the v0.3.0-era driver alike. A device on a
+  root port was unaffected.
+
+Cause
+  The controller driver has to know a hub's port count before it can give a
+  device behind that hub a slot, and it learns the count by watching the hub
+  class driver read the hub descriptor. It recognised that read by the
+  descriptor type in the request (wValue 0x2900 or 0x2A00). ReactOS's usbhub
+  asks with wValue 0 first and retries with 0x2900 only if the hub refuses
+  (drivers/usb/usbhub/usbhub.c, USBH_SyncGetHubDescriptor); QEMU's hub
+  answers the first form, and a real hub that does would fail the same way.
+  The read was therefore never seen,
+  the port count stayed zero and CreateUsbDevice returned
+  STATUS_INVALID_PARAMETER for every port. The hub's own packet capture shows
+  it: after the port reset completes, usbhub clears PORT_ENABLE and no packet
+  ever reaches the device.
+  A second check would have failed next: the descriptor length was required
+  to cover DeviceRemovable and a PortPwrCtrlMask of the same size. QEMU's
+  eight-port hub sends a one-byte mask (10 bytes, not 11).
+
+Change
+  - The reply to a class GET_DESCRIPTOR on a hub is recognised by its own
+    type byte (0x29 or 0x2A), whatever the request's wValue.
+    src/reactos/usb_extensions.cpp.
+  - A USB 2 hub descriptor must reach the end of DeviceRemovable; the
+    obsolete mask after it may be short, as Linux v6.12 get_hub_descriptor
+    accepts. src/core/usb_policy.cpp, tests/usb_policy_tests.cpp.
+
+Emulator, QEMU/KVM, qemu-xhci, delivery build with the untested-controller
+switch on, QEMU usb-hub on root port 2
+  - Mouse on hub port 1: enumerated, configured, HID report descriptor read,
+    interrupt endpoint polled; ReactOS installed HID\Vid_0627&Pid_0001.
+    Before the change the same boot ended at the cleared PORT_ENABLE.
+  - Sound card on hub port 1 with the isochronous test client: 3000 packets
+    in 2.999 s, every sample in sequence, and the drop, cancel and restart
+    phases as on a root port (evidence/isochronous-transfers.txt).
+
+Not verified
+  - A real hub, on the board or anywhere else.
+  - High-speed and SuperSpeed hubs, and with them transaction translators
+    and hub depth: QEMU's hub is full speed only.
+  - Unplugging a hub with devices behind it.

@@ -52,15 +52,20 @@ NTSTATUS apply_hub(UsbDevice &device, const HubPolicy &policy) noexcept {
 } // namespace
 NTSTATUS usb_observe_control(UsbDevice &device, const SetupPacket &request, void *data,
                              ULONG bytes) noexcept {
+    // The hub class may ask for its descriptor with a zero wValue (ReactOS does,
+    // and falls back to 0x2900 only if the hub refuses), so the reply is
+    // recognised by its own type byte, not by the request.
     if (request.request_type != 0xa0 || request.request != USB_REQUEST_GET_DESCRIPTOR ||
-        (request.value >> 8 != 0x29 && request.value >> 8 != 0x2a)) {
+        !device.hub || device.root) {
         return STATUS_SUCCESS;
     }
-    if (KeGetCurrentIrql() != PASSIVE_LEVEL || !data || bytes < 2 || device.removed ||
-        !device.hub || device.root || !device.initialized) {
+    auto *wire = static_cast<const std::uint8_t *>(data);
+    if (!data || bytes < 2 || (wire[1] != 0x29 && wire[1] != 0x2a)) {
+        return STATUS_SUCCESS;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL || device.removed || !device.initialized) {
         return STATUS_DEVICE_PROTOCOL_ERROR;
     }
-    auto *wire = static_cast<const std::uint8_t *>(data);
     if (request.length < wire[0] && bytes == request.length) {
         return STATUS_SUCCESS;
     }
