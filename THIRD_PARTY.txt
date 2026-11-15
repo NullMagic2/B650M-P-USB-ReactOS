@@ -107,6 +107,16 @@ ReactOS compatibility audit
   https://github.com/reactos/reactos/blob/master/drivers/usb/usbxhci/controller.cpp
   No current upstream source or WDF/UCX implementation is bundled as a working HCD.
 
+Radeon package installer
+  src/tools/gpu_setup_wizard.cpp is this project's own GPL-2.0-only front end
+  for radeonctl.exe, the installer of a separate RX 7900 driver package by the
+  same author. That package's source and binaries are not in this repository.
+  compat/rx7900/radeonctl-board-fixes.patch is a patch against that package's
+  installer sources (src/tools/radeon_installer.*, radeon_install_policy.hpp,
+  radeon_win32_system.cpp and one test header): attached-device filtering,
+  single-instance binding and a journalled progress step. It carries no AMD
+  firmware and no Linux source. The card's video ROM is never distributed.
+
 Requested document conventions
   docs/imported/rtl8125/STYLE_GUIDE.md and ARCHITECTURE.md are unchanged snapshots
   from the RTL8125 project. Their original network and GPU inventories do not
@@ -215,3 +225,11 @@ USB storage command size (2026-11-14)
   drivers/usb/usbstor/usbstor.h (USBSTOR_DEFAULT_MAX_TRANSFER_LENGTH, 64 KiB to
   1 MiB) and keeps that file's upstream GPL-2.0-or-later terms. No other
   upstream source is copied.
+
+USB Attached SCSI transport (2026-11-14)
+- compat/reactos/usbstor-uas.patch adds call sites and one field to ReactOS
+  drivers/usb/usbstor (usbstor.h, fdo.c, scsi.c, error.c), which keep their
+  upstream GPL-2.0-or-later terms. compat/reactos/usbstor/uas_transport.cpp
+  and src/core/uas.cpp are original GPL-2.0-only C++ written against the
+  public USB Attached SCSI and xHCI specifications; no other driver's source
+  is copied.

@@ -2,12 +2,17 @@
 # Purpose: Build native-used endpoint/hub/storage contracts and boundary checks.
 # Created: 2026-10-25
 # Architecture: Included once by the shared integration owner after xhci_core exists.
-target_sources(xhci_core PRIVATE src/core/usb_policy.cpp src/core/usb_speed.cpp src/core/storage_result.cpp)
+target_sources(xhci_core PRIVATE src/core/usb_policy.cpp src/core/usb_speed.cpp src/core/storage_result.cpp
+    src/core/uas.cpp)
 if(XHCI_TESTS)
     add_executable(xhci_usb_policy_tests tests/usb_policy_tests.cpp)
     target_link_libraries(xhci_usb_policy_tests PRIVATE xhci_core)
     xhci_cpp(xhci_usb_policy_tests)
     add_test(NAME xhci_usb_policy COMMAND xhci_usb_policy_tests)
+    add_executable(xhci_uas_tests tests/uas_tests.cpp)
+    target_link_libraries(xhci_uas_tests PRIVATE xhci_core)
+    xhci_cpp(xhci_uas_tests)
+    add_test(NAME xhci_uas COMMAND xhci_uas_tests)
     add_executable(xhci_hid_report_limit_tests tests/hid_report_limit_tests.cpp)
     xhci_cpp(xhci_hid_report_limit_tests)
     add_test(NAME xhci_hid_report_limit COMMAND xhci_hid_report_limit_tests)
@@ -18,6 +23,7 @@ set(XHCI_M07_M08_NATIVE_SOURCES
     src/core/storage_result.cpp
     src/reactos/runtime_power.cpp)
 option(XHCI_NATIVE_USB_COMPATIBILITY "Rebuild patched native USBHUB/USBSTOR/disk in owned staging" OFF)
+option(XHCI_UAS_TRACE "Emulator diagnostics: trace the UAS transport to the debug output; never deliver" OFF)
 if(XHCI_NATIVE_USB_COMPATIBILITY)
     add_custom_target(xhci_native_usb_compatibility
         COMMAND "${CMAKE_COMMAND}"
@@ -25,6 +31,7 @@ if(XHCI_NATIVE_USB_COMPATIBILITY)
             "-DXHCI_COMPAT_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/usb-compatibility"
             "-DXHCI_REACTOS_SOURCE=${XHCI_REACTOS_SOURCE}"
             "-DXHCI_REACTOS_BUILD=${XHCI_REACTOS_BUILD}"
+            "-DXHCI_UAS_TRACE=${XHCI_UAS_TRACE}"
             -P "${PROJECT_SOURCE_DIR}/cmake/usb_compatibility_build.cmake"
         VERBATIM)
 endif()

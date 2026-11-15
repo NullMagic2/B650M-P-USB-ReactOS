@@ -75,8 +75,12 @@ Booting the board from a USB stick
   diagnostic observer are compiled; the result differs from the board-tested
   loader in its PE timestamps and checksum only.
 
-  Release v0.2.0 also provides these files prebuilt, as the installer and as
+  Release v0.3.0 also provides these files prebuilt, as the installer and as
   B650M-P-USB-ReactOS-boot-files-i386.zip.
+
+  XHCI_GPU_SETUP_WIZARD=ON builds xhci_gpu_setup_wizard, the graphical front end
+  for the separate Radeon package's radeonctl.exe (native/RX7900-Setup-i386.exe).
+  It needs only the MinGW runtime. Place it beside radeonctl.exe as Setup.exe.
 
   Use the normal boot entry. /DEBUGPORT=SCREEN stalls on this board. A failed
   start or assertion is reported on a red screen by xhciboot.sys instead.

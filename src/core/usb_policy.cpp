@@ -88,10 +88,12 @@ bool endpoint_policy(UsbSpeed speed, const std::uint8_t *descriptor, std::size_t
     if (speed >= UsbSpeed::super && transfer != 0) {
         if (!companion || companion_bytes < 6 || companion[0] < 6 ||
             companion[0] > companion_bytes || companion[1] != 0x30 || companion[2] > 15 ||
-            companion[3] != 0) {
+            (transfer == 2 ? (companion[3] & 0xe0) != 0 || (companion[3] & 0x1f) > 16
+                           : companion[3] != 0)) {
             return false;
         }
         candidate.burst = companion[2];
+        candidate.streams = transfer == 2 ? static_cast<std::uint8_t>(companion[3] & 0x1f) : 0;
         const unsigned interval_bytes = little16(companion + 4);
         if ((transfer == 2 && interval_bytes) ||
             (transfer == 3 &&

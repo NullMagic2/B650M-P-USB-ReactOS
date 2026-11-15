@@ -214,6 +214,10 @@ void free_slot(Runtime &runtime, UCHAR slot) noexcept {
         dma_free(runtime, endpoint.memory);
         endpoint.producer.reset();
     }
+    for (ULONG endpoint = 0; endpoint < 32; ++endpoint) {
+        dma_free(runtime, owner.stream_arrays[endpoint]);
+        owner.stream_ids[endpoint] = 0;
+    }
     dma_free(runtime, owner.input);
     dma_free(runtime, owner.output);
     owner.enabled = false;

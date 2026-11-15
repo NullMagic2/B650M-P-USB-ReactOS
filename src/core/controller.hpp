@@ -55,6 +55,9 @@ struct Capabilities {
     std::uint32_t doorbell_offset{}, runtime_offset{}, extended_offset{};
     std::uint8_t context_bytes{};
     bool address_64_bit{};
+    // HCCPARAMS1 MaxPSASize: a primary stream array may hold 2^(value+1)
+    // entries. Zero means the controller has no stream support.
+    std::uint8_t stream_array_exponent{};
 };
 enum class PortProtocol : std::uint8_t { unknown, usb2, usb3 };
 struct ProtocolMap {

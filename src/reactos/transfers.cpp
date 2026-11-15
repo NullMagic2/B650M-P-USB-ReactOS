@@ -180,8 +180,10 @@ NTSTATUS runtime_abort_endpoint(Runtime *runtime, UCHAR slot, UCHAR endpoint,
         KeReleaseMutex(&serialization, FALSE);
         return status;
     }
+    // A stream ring's dequeue pointer carries stream context type 1.
     const ULONGLONG dequeue = (ring.memory.logical + ring.producer.enqueue * sizeof(Trb)) |
-                              (ring.producer.cycle ? 1ull : 0ull);
+                              (ring.producer.cycle ? 1ull : 0ull) |
+                              (runtime->slots[slot].stream_ids[endpoint] ? 2ull : 0ull);
     status = runtime_command(runtime, TrbType::set_dequeue, slot, endpoint, dequeue, 0, command);
     if (NT_SUCCESS(status)) {
         KIRQL irql;
@@ -253,7 +255,9 @@ NTSTATUS runtime_transfer(Runtime *runtime, UCHAR slot, UCHAR endpoint, USHORT p
             KeClearEvent(&runtime->callers_idle);
         }
         if (!publish_descriptor(owner.endpoints[endpoint], *transfer) ||
-            !runtime->registers.write32(runtime->caps.doorbell_offset + slot * 4, endpoint)) {
+            !runtime->registers.write32(
+                runtime->caps.doorbell_offset + slot * 4,
+                endpoint | (static_cast<ULONG>(owner.stream_ids[endpoint]) << 16))) {
             raise_fault(*runtime, (2u << 16) | __LINE__);
         }
     }

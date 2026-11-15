@@ -6,6 +6,7 @@ Created: 2026-10-25
 Architecture: Validated cached descriptors determine native pipe identities and scheduling.
 */
 #include "usb.hpp"
+#include "../core/uas.hpp"
 namespace xhci::native {
 namespace {
 struct ConfigurationImage {
@@ -58,14 +59,19 @@ NTSTATUS fill_interface(UsbDevice &device, PUSBD_INTERFACE_INFORMATION informati
         }
         auto &pipe = usb_pipe(device, policy.dci);
         ULONGLONG dequeue{};
+        // A bulk endpoint that declares streams (a UAS status or data pipe)
+        // must be driven with stream IDs, so it is configured with a stream
+        // array whenever the controller supports one.
+        policy.stream_array =
+            policy.streams && device.bus->controller->capabilities.stream_array_exponent;
         NTSTATUS status = runtime_prepare_endpoint(device.bus->controller->runtime, device.slot,
-                                                   policy.dci, dequeue);
+                                                   policy.dci, dequeue, policy.stream_array);
         if (!NT_SUCCESS(status)) {
             return status;
         }
         auto *context =
             reinterpret_cast<ULONG *>(reinterpret_cast<UCHAR *>(input) + (policy.dci + 1) * stride);
-        context[0] = policy.context0;
+        context[0] = policy.context0 | (policy.stream_array ? stream_context0 : 0);
         context[1] = policy.context1;
         context[2] = static_cast<ULONG>(dequeue);
         context[3] = static_cast<ULONG>(dequeue >> 32);
@@ -80,7 +86,7 @@ NTSTATUS fill_interface(UsbDevice &device, PUSBD_INTERFACE_INFORMATION informati
         output.PipeType = static_cast<USBD_PIPE_TYPE>(cursor[3] & 3);
         output.PipeHandle = &pipe;
         output.MaximumTransferSize = maximum_transfer_bytes;
-        output.PipeFlags = 0;
+        output.PipeFlags = policy.stream_array ? pipe_flag_stream_one : 0;
         add |= 1u << policy.dci;
         if (policy.dci > highest) {
             highest = policy.dci;

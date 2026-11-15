@@ -1,0 +1,81 @@
+{
+  "release": "v0.3.0",
+  "installer_sha256": "7be1fc853bebd4d45d87907ef0d62ac86fddc7c65127cc4951247c0b091b6eda",
+  "installer_bytes": 1593518,
+  "embedded_files": 18,
+  "embedded_file_hashes_verified_on_host": true,
+  "installer_run_in_reactos": false,
+  "installer_changes_from_v0_2_0": [
+    "xhci/xhci.sys",
+    "usbstor/usbstor.sys",
+    "INSTALL.txt"
+  ],
+  "boot_files_archive": {
+    "filename": "B650M-P-USB-ReactOS-boot-files-i386.zip",
+    "sha256": "a5160839688b0a0305061fd8f6b5f6dee2fca54dae1e4882bbe42bde58c5c6fd",
+    "bytes": 317815
+  },
+  "board_session_modules_sha256": {
+    "freeldr.sys": "ad1006a8e716a0eb4762c5a3674b12e3aab5feda017e5d0633076416ea42d866",
+    "xhci.sys": "ea75db387bf57949ac26082a7f82785d6b41bd273a0a495703edc8759b391f70",
+    "xhciboot.sys": "e08029bb91a51cc45fb70862c4802d6791763e54e428a8ed1f723c0948f2f1f0",
+    "hidusb.sys": "4b4944121cebe5359b96d9157a5a636903457b29fe4275422d5f04652ad50915",
+    "usbhub.sys": "b2351e405d347ae173b7c2e4a8b7c112a6ba48c270715173c357d89f9c1a028e",
+    "usbstor.sys": "004b0f40af883b04c87046b1fa69c0e5ac8bf34f0c219d95b7a031027ffaa614",
+    "disk.sys": "1f91fb12d6661fdbe3ddfd79d3c1455bc2caf002620c3fd2cec6c4219d35d238"
+  },
+  "modules_unchanged_from_v0_2_0": [
+    "freeldr.sys",
+    "usbhub.sys",
+    "disk.sys",
+    "hidusb.sys"
+  ],
+  "board_session": {
+    "board": "MSI PRO B650M-P (MS-7E27)",
+    "date": "2026-11-15",
+    "entry": "legacy CSM",
+    "counters_saved_after_seconds": 690,
+    "controllers_interrupt_driven": 5,
+    "controllers_polling": 0,
+    "controllers_flooded": 0,
+    "interrupts_1022_43f7": 211614,
+    "uas_capable_bridge_attached": true,
+    "uas_transport_confirmed": false,
+    "throughput_measured": false,
+    "reported_by_user": [
+      "installing a program was slow",
+      "menus sometimes opened slowly",
+      "restart hung"
+    ],
+    "record": "evidence/usb-attached-scsi.txt"
+  },
+  "rebuild_from_pinned_dependencies": {
+    "targets": [
+      "xhci_native_controller",
+      "xhci_native_boot",
+      "xhci_native_usb_compatibility",
+      "xhci_native_loader",
+      "xhci_gpu_setup_wizard"
+    ],
+    "bytes_differing_from_board_session": {
+      "xhci.sys": 4,
+      "xhciboot.sys": 4,
+      "usbstor.sys": 4,
+      "freeldr.sys": 8
+    },
+    "difference": "PE timestamps and checksum"
+  },
+  "host_test_suites_passed": 8,
+  "source_embedded": false,
+  "whole_reactos_tree_embedded": false,
+  "kernel_patch_bundled": false,
+  "radeon_package_included": false,
+  "not_verified": [
+    "installer install, resume, rollback and remove in ReactOS for this build",
+    "USB Attached SCSI on the board, and any throughput figure there",
+    "cause of the restart hang seen in the board session",
+    "other boards, other USB sticks",
+    "storage write durability and unplug/reconnect from a USB-root session on the board"
+  ],
+  "dependencies_download_base": "https://github.com/NullMagic2/B650M-P-USB-ReactOS/releases/download/v0.2.0"
+}

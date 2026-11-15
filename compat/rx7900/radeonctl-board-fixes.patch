@@ -1,0 +1,288 @@
+diff -ru a/src/tools/radeon_installer.cpp src/src/tools/radeon_installer.cpp
+--- a/src/tools/radeon_installer.cpp	2026-10-25 01:14:12.791517085 -0300
++++ b/src/tools/radeon_installer.cpp	2026-11-14 18:04:06.764951025 -0300
+@@ -180,6 +180,7 @@
+ 
+     // Devices and the owned service.
+     uint32_t inventory() noexcept;
++    void note_step(const wchar_t* step) noexcept;
+     const DeviceRecord* find_device(const wchar_t* instance) const noexcept;
+     uint32_t ensure_service(bool& changed) noexcept;
+     uint32_t remove_owned_service(bool& removed) noexcept;
+@@ -824,7 +825,7 @@
+     constexpr const wchar_t* names[]{L"Operation", L"Features", L"RestartPending", L"QueuedBootLow",
+         L"QueuedBootHigh", L"PackageVersion",
+         L"DeviceInstance", L"HardwareId", L"PreviousService", L"InfName", L"SnapshotTaken",
+-        L"SnapshotUpperFilters", L"SnapshotLowerFilters"};
++        L"SnapshotUpperFilters", L"SnapshotLowerFilters", L"Step"};
+ 
+     for (const auto* name : names) {
+         const uint32_t removed = delete_value(journal_key, name);
+@@ -846,6 +847,12 @@
+     return result;
+ }
+ 
++// Progress trail of a transaction in flight. Journal writes are flushed to
++// disk, so after an interruption the last step reached can be read back.
++void Installer::note_step(const wchar_t* step) noexcept {
++    write_string(journal_key, L"Step", step);
++}
++
+ uint32_t Installer::inventory() noexcept {
+     inventory_ = DeviceInventory{};
+     return ops_.enumerate_devices(ops_.context, inventory_);
+@@ -1136,6 +1143,7 @@
+         restart = true;
+     }
+ 
++    note_step(L"service");
+     bool service_changed = false;
+     if ((result = ensure_service(service_changed)) != error::success) {
+         say("The rx7900video service could not be verified (Win32 error %lu).", static_cast<unsigned long>(result));
+@@ -1186,15 +1194,18 @@
+         say("Placed %ls from the package.", live);
+     }
+ 
++    note_step(L"options");
+     if ((result = apply_display_values()) != error::success ||
+         (result = apply_feature_values(journal.features)) != error::success) {
+         say("Writing the rx7900video Device0 values failed (Win32 error %lu).", static_cast<unsigned long>(result));
+         return exit_code::failure;
+     }
++    note_step(L"opengl");
+     if ((result = apply_icd(journal.features, package, journal, restart)) != error::success) {
+         say("OpenGL ICD installation/registration failed (Win32 error %lu).", static_cast<unsigned long>(result));
+         return exit_code::failure;
+     }
++    note_step(L"recording");
+ 
+     journal.state = JournalState::installed;
+     for (auto& file : journal.files) {
+@@ -1266,6 +1277,10 @@
+     size_t selected = 0;
+     const Selection selection = select_navi31(inventory_, selected);
+ 
++    if (inventory_.absent != 0) {
++        say("Ignored %lu recorded Navi31 device(s) that are not attached (stale registry entries).",
++            static_cast<unsigned long>(inventory_.absent));
++    }
+     if (selection == Selection::none_present) {
+         say("No Navi31 GPU (PCI 1002:7448/744A/744B/744C/745E) is present. Nothing was changed.");
+         if (inventory_.lightning_present) {
+@@ -1355,7 +1370,9 @@
+         Path inf{};
+         bool driver_restart = false;
+         package_path(inf_filename, inf);
+-        result = ops_.install_driver(ops_.context, device.hardware_id, inf, driver_restart);
++        note_step(L"binding");
++        result = ops_.install_driver(ops_.context, device.instance_id, device.hardware_id, inf, driver_restart);
++        note_step(L"bound");
+         restart = restart || driver_restart;
+ 
+         const uint32_t enumerated = inventory();
+@@ -2839,6 +2856,10 @@
+     if (inventory_.omitted != 0) {
+         say("  %lu further Navi31 functions were not listed.", static_cast<unsigned long>(inventory_.omitted));
+     }
++    if (inventory_.absent != 0) {
++        say("  Ignored %lu recorded Navi31 device(s) that are not attached (stale registry entries).",
++            static_cast<unsigned long>(inventory_.absent));
++    }
+ }
+ 
+ void Installer::status_service() noexcept {
+diff -ru a/src/tools/radeon_installer.hpp src/src/tools/radeon_installer.hpp
+--- a/src/tools/radeon_installer.hpp	2026-10-25 01:10:46.436388345 -0300
++++ b/src/tools/radeon_installer.hpp	2026-11-14 18:04:06.764201928 -0300
+@@ -63,9 +63,10 @@
+     uint32_t (*delete_service)(void* context);
+ 
+     uint32_t (*enumerate_devices)(void* context, DeviceInventory& output);
+-    // UpdateDriverForPlugAndPlayDevices for the exact hardware ID and package INF.
+-    uint32_t (*install_driver)(void* context, const wchar_t* hardware_id, const wchar_t* inf_path,
+-                               bool& restart);
++    // Installs the package INF on exactly one device instance. The device is
++    // not restarted; the new driver loads at the next system start.
++    uint32_t (*install_driver)(void* context, const wchar_t* instance_id, const wchar_t* hardware_id,
++                               const wchar_t* inf_path, bool& restart);
+     // DIF_REMOVE (devnode, driver key and filters are deleted). ReactOS 0.4.16
+     // returns error::call_not_implemented: SetupDiSetClassInstallParams has no
+     // DIF_REMOVE parameter handler and SetupDiRemoveDevice is a stub.
+diff -ru a/src/tools/radeon_install_policy.hpp src/src/tools/radeon_install_policy.hpp
+--- a/src/tools/radeon_install_policy.hpp	2026-10-25 00:36:46.613077354 -0300
++++ b/src/tools/radeon_install_policy.hpp	2026-11-14 18:00:42.900813969 -0300
+@@ -220,6 +220,7 @@
+     DeviceRecord devices[device_capacity]{};
+     size_t count = 0;
+     size_t omitted = 0;             // Navi31 functions beyond capacity
++    size_t absent = 0;              // recorded Navi31 instances with no attached device (never candidates)
+     bool lightning_present = false; // the virtual 1234:11F1 device (never touched)
+ };
+ 
+diff -ru a/src/tools/radeon_win32_system.cpp src/src/tools/radeon_win32_system.cpp
+--- a/src/tools/radeon_win32_system.cpp	2026-10-25 01:27:33.647296735 -0300
++++ b/src/tools/radeon_win32_system.cpp	2026-11-14 18:04:06.765520198 -0300
+@@ -364,15 +364,33 @@
+             continue; // Not a parseable PCI identity; never a binding candidate.
+         }
+ 
+-        output.lightning_present = output.lightning_present ||
+-            multi_string_contains(hardware, hardware_characters, lightning_hardware_id) ||
++        const bool lightning = multi_string_contains(hardware, hardware_characters, lightning_hardware_id) ||
+             multi_string_contains(compatible, compatible_characters, lightning_hardware_id);
+ 
+         DeviceRecord record{};
++        const bool navi31 =
++            navi31_identity(hardware, hardware_characters, record.device_id, record.revision, record.hardware_id) ||
++            navi31_identity(compatible, compatible_characters, record.device_id, record.revision,
++                            record.hardware_id);
+ 
+-        if (!navi31_identity(hardware, hardware_characters, record.device_id, record.revision, record.hardware_id) &&
+-            !navi31_identity(compatible, compatible_characters, record.device_id, record.revision,
+-                             record.hardware_id)) {
++        if (!lightning && !navi31) {
++            continue;
++        }
++
++        // ReactOS returns every recorded device instance for a "present devices"
++        // query, attached or not. A record without a live device node is a stale
++        // registry entry, such as this card seen earlier at another PCI location;
++        // it cannot be bound and must not count as a second GPU.
++        ULONG status = 0;
++        ULONG problem = 0;
++        const CONFIGRET live = CM_Get_DevNode_Status(&status, &problem, device.DevInst, 0);
++        if (live == CR_NO_SUCH_DEVINST) {
++            output.absent += navi31 ? 1 : 0;
++            continue;
++        }
++
++        output.lightning_present = output.lightning_present || lightning;
++        if (!navi31) {
+             continue;
+         }
+         if (output.count == device_capacity) {
+@@ -402,9 +420,7 @@
+             record.service[0] = 0;
+         }
+ 
+-        ULONG status = 0;
+-        ULONG problem = 0;
+-        if (CM_Get_DevNode_Status(&status, &problem, device.DevInst, 0) == CR_SUCCESS) {
++        if (live == CR_SUCCESS) {
+             record.started = (status & DN_STARTED) != 0;
+             record.problem = (status & DN_HAS_PROBLEM) != 0 ? problem : 0;
+         }
+@@ -424,17 +440,6 @@
+     return ERROR_BUFFER_OVERFLOW;
+ }
+ 
+-uint32_t install_driver(void*, const wchar_t* hardware_id, const wchar_t* inf_path, bool& restart) {
+-    BOOL reboot = FALSE;
+-    restart = false;
+-
+-    if (!UpdateDriverForPlugAndPlayDevicesW(nullptr, hardware_id, inf_path, 0, &reboot)) {
+-        return GetLastError();
+-    }
+-    restart = reboot != FALSE;
+-    return ERROR_SUCCESS;
+-}
+-
+ // Opens one exact device instance in a new set the caller keeps alive.
+ uint32_t open_instance(const wchar_t* instance_id, DeviceSetHandle& set, SP_DEVINFO_DATA& device) noexcept {
+     if (!set.valid()) {
+@@ -445,6 +450,62 @@
+     return SetupDiOpenDeviceInfoW(set.get(), instance_id, nullptr, 0, &device) ? ERROR_SUCCESS : GetLastError();
+ }
+ 
++// Installs the package INF on one device instance through the class installer.
++// UpdateDriverForPlugAndPlayDevices is not used: ReactOS applies it to every
++// recorded instance with the hardware ID, attached or not, so a stale record of
++// the card would be bound too. DI_DONOTCALLCONFIGMG keeps the running display
++// device untouched; the new driver takes effect at the next system start.
++uint32_t install_driver(void*, const wchar_t* instance_id, const wchar_t*, const wchar_t* inf_path,
++                        bool& restart) {
++    restart = true;
++
++    DeviceSetHandle set(SetupDiCreateDeviceInfoList(nullptr, nullptr), INVALID_HANDLE_VALUE);
++    SP_DEVINFO_DATA device{};
++    const uint32_t opened = open_instance(instance_id, set, device);
++
++    if (opened != ERROR_SUCCESS) {
++        return opened;
++    }
++
++    SP_DEVINSTALL_PARAMS_W parameters{};
++    parameters.cbSize = sizeof(parameters);
++    if (!SetupDiGetDeviceInstallParamsW(set.get(), &device, &parameters)) {
++        return GetLastError();
++    }
++    parameters.Flags |= DI_ENUMSINGLEINF | DI_DONOTCALLCONFIGMG | DI_QUIETINSTALL;
++    parameters.FlagsEx |= DI_FLAGSEX_ALLOWEXCLUDEDDRVS;
++    if (FAILED(StringCchCopyW(parameters.DriverPath, MAX_PATH, inf_path))) {
++        return ERROR_BUFFER_OVERFLOW;
++    }
++    if (!SetupDiSetDeviceInstallParamsW(set.get(), &device, &parameters) ||
++        !SetupDiBuildDriverInfoList(set.get(), &device, SPDIT_COMPATDRIVER)) {
++        return GetLastError();
++    }
++
++    uint32_t result = ERROR_SUCCESS;
++    SP_DRVINFO_DATA_W driver{};
++    driver.cbSize = sizeof(driver);
++    if (!SetupDiEnumDriverInfoW(set.get(), &device, SPDIT_COMPATDRIVER, 0, &driver)) {
++        result = GetLastError();
++        result = result == ERROR_NO_MORE_ITEMS ? static_cast<uint32_t>(ERROR_NO_COMPAT_DRIVERS) : result;
++    }
++
++    constexpr DI_FUNCTION steps[]{DIF_SELECTBESTCOMPATDRV, DIF_ALLOW_INSTALL, DIF_INSTALLDEVICEFILES,
++                                  DIF_REGISTER_COINSTALLERS, DIF_INSTALLINTERFACES, DIF_INSTALLDEVICE};
++    for (const DI_FUNCTION step : steps) {
++        if (result != ERROR_SUCCESS) {
++            break;
++        }
++        if (!SetupDiCallClassInstaller(step, set.get(), &device)) {
++            const DWORD failed = GetLastError();
++            result = failed == ERROR_DI_DO_DEFAULT ? static_cast<uint32_t>(ERROR_SUCCESS) : failed;
++        }
++    }
++
++    SetupDiDestroyDriverInfoList(set.get(), &device, SPDIT_COMPATDRIVER);
++    return result;
++}
++
+ uint32_t remove_device(void*, const wchar_t* instance_id) {
+     DeviceSetHandle set(SetupDiCreateDeviceInfoList(nullptr, nullptr), INVALID_HANDLE_VALUE);
+     SP_DEVINFO_DATA device{};
+--- a/tests/radeon_installer_fake_system.hpp	2026-10-25 01:11:51.267112747 -0300
++++ b/tests/radeon_installer_fake_system.hpp	2026-11-14 18:04:06.765412871 -0300
+@@ -158,8 +158,8 @@
+         value.set_demand_start = [](void* c) { return self(c).set_demand_start(); };
+         value.delete_service = [](void* c) { return self(c).delete_service(); };
+         value.enumerate_devices = [](void* c, radeon::DeviceInventory& i) { return self(c).enumerate(i); };
+-        value.install_driver = [](void* c, const wchar_t* h, const wchar_t* i, bool& r) {
+-            return self(c).install_driver(h, i, r);
++        value.install_driver = [](void* c, const wchar_t* d, const wchar_t* h, const wchar_t* i, bool& r) {
++            return self(c).install_driver(d, h, i, r);
+         };
+         value.remove_device = [](void* c, const wchar_t* i) { return self(c).remove_device(i); };
+         value.unbind_device = [](void* c, const wchar_t* i, radeon::UnbindStep& f) {
+@@ -678,7 +678,8 @@
+         }
+         set_string(radeon::video_subkey, L"Service", radeon::service_name);
+     }
+-    uint32_t install_driver(const wchar_t* hardware_id, const wchar_t* inf_source, bool& restart) {
++    uint32_t install_driver(const wchar_t* instance_id, const wchar_t* hardware_id, const wchar_t* inf_source,
++                            bool& restart) {
+         restart = false;
+         if (mutate()) {
+             return error::gen_failure;
+@@ -688,7 +689,8 @@
+         }
+         bool matched = false;
+         for (auto& device : devices) {
+-            if (!device.present || !radeon::text_equal_insensitive(device.record.hardware_id, hardware_id)) {
++            if (!device.present || !radeon::text_equal_insensitive(device.record.hardware_id, hardware_id) ||
++                !radeon::text_equal_insensitive(device.record.instance_id, instance_id)) {
+                 continue;
+             }
+             matched = true;

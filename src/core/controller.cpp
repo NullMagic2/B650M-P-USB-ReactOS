@@ -108,6 +108,7 @@ bool read_capabilities(const RegisterReader &reader, Capabilities &result) noexc
         static_cast<std::uint16_t>((((hcs2 >> scratchpad_high_shift) & 31) << 5) | (hcs2 >> 27));
     c.context_bytes = (hcc1 & 4) ? 64 : 32;
     c.address_64_bit = (hcc1 & 1) != 0;
+    c.stream_array_exponent = static_cast<std::uint8_t>((hcc1 >> 12) & 15);
     c.extended_offset = (hcc1 >> 16) * 4;
     c.doorbell_offset = db & ~std::uint32_t(3);
     c.runtime_offset = rt & ~std::uint32_t(31);

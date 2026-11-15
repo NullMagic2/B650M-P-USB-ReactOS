@@ -51,8 +51,12 @@ int main() {
     require(!endpoint_policy(UsbSpeed::super, super_bulk, 7, nullptr, 0, endpoint),
             "SS companion required");
     companion[3] = 1;
+    require(endpoint_policy(UsbSpeed::super, super_bulk, 7, companion, 6, endpoint) &&
+                endpoint.streams == 1 && !endpoint.stream_array,
+            "SS bulk streams declared");
+    companion[3] = 0x21;
     require(!endpoint_policy(UsbSpeed::super, super_bulk, 7, companion, 6, endpoint),
-            "streams unsupported");
+            "reserved stream bits");
     companion[3] = 0;
     super_bulk[3] = 3;
     super_bulk[6] = 1;

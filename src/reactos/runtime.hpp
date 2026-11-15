@@ -43,8 +43,11 @@ NTSTATUS runtime_context(Runtime *runtime, UCHAR slot, bool input, UCHAR endpoin
 // Caller serializes per-slot lifetime against disable/stop. PASSIVE_LEVEL only.
 // Allocates a real transfer segment and returns its current dequeue including DCS.
 // M05/M06 fill endpoint policy and submit Configure Endpoint/URBs separately.
+// With streams the endpoint gets a four-entry linear stream array whose entry
+// 1 references the segment; logical is then the array address for the
+// endpoint context, which the caller marks with stream_context0.
 NTSTATUS runtime_prepare_endpoint(Runtime *runtime, UCHAR slot, UCHAR endpoint,
-                                  ULONGLONG &logical) noexcept;
+                                  ULONGLONG &logical, bool streams = false) noexcept;
 NTSTATUS runtime_input_context(Runtime *runtime, UCHAR slot, void *&address, ULONG &bytes,
                                ULONGLONG &logical) noexcept;
 struct TransferResult {

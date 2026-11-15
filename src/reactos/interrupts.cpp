@@ -31,16 +31,25 @@ BOOLEAN NTAPI interrupt_service(PKINTERRUPT, PVOID context) {
     }
     ULONG status = 0, iman = 0;
     const ULONG ir = runtime.caps.runtime_offset + runtime_interrupters_offset;
+    // The line is this controller's when its interrupter is pending and
+    // enabled. USBSTS.EINT is not required: it only latches a pending
+    // transition, so an event arriving between the two acknowledgements below
+    // leaves the interrupter pending with EINT already clear. Requiring EINT
+    // then left the level line asserted with no handler claiming it.
     if (!runtime.registers.read32(runtime.caps.operational_offset + 4, status) ||
-        status == MAXULONG || !runtime.registers.read32(ir, iman) ||
-        !(status & ((1u << 2) | (1u << 3))) || (!(status & (1u << 2)) && !(iman & 1))) {
+        status == MAXULONG || !runtime.registers.read32(ir, iman) || iman == MAXULONG ||
+        ((iman & 3) != 3 && !(status & (1u << 2)))) {
         InterlockedIncrement(&runtime.counters.unclaimed);
         return FALSE;
     }
     InterlockedIncrement(&runtime.counters.interrupts);
+    // EINT first, then the interrupter: an event between the two writes then
+    // leaves at most a stale EINT, never a pending interrupter nobody clears.
+    if (status & ((1u << 2) | (1u << 3))) {
+        runtime.registers.write32(runtime.caps.operational_offset + 4,
+                                  status & ((1u << 2) | (1u << 3)));
+    }
     runtime.registers.write32(ir, 1); // W1C IP, mask IE until DPC publishes ERDP.
-    runtime.registers.write32(runtime.caps.operational_offset + 4,
-                              status & ((1u << 2) | (1u << 3)));
     if (status & (1u << 2)) {
         raise_fault(runtime, (1u << 16) | __LINE__);
     }

@@ -1,0 +1,93 @@
+USB Attached SCSI, 2026-11-14
+
+Scope
+  One command at a time (tag and stream ID 1) over the four UAS pipes of a
+  SuperSpeed device, in the patched USBSTOR, on xHCI streams added to the
+  controller driver. Bulk-only transport remains for every device or
+  controller that does not qualify. Everything below was run in a QEMU/KVM
+  guest (emulated xHCI, usb-uas with one scsi-hd disk on a SuperSpeed port),
+  except the board session recorded at the end.
+
+Controller driver
+  - A SuperSpeed bulk endpoint whose companion declares streams gets a linear
+    primary stream array of four entries (MaxPStreams 1, LSA); entry 1 holds
+    the endpoint ring with SCT 1. Used only when HCCPARAMS1 MaxPSASize is
+    nonzero. The pipe reports PipeFlags 0x80000000.
+  - Doorbells carry stream ID 1; Set TR Dequeue Pointer carries the stream ID
+    and SCT; restoration after reset programs the same context.
+  - Interrupt handler: claims when the interrupter is pending and enabled
+    (IMAN.IP and IE) or on host system error, and clears USBSTS.EINT before
+    IMAN.IP. Before this an event arriving between the two acknowledgements
+    left IP set with EINT clear; the handler required EINT, never claimed the
+    interrupt, and the level line stayed asserted. With UAS (events in pairs)
+    the guest stopped within seconds in about half the boots; found by
+    sampling the stopped guest, which sat in the handler's register reads.
+
+USBSTOR
+  - compat/reactos/usbstor-uas.patch, compat/reactos/usbstor/uas_transport.cpp,
+    src/core/uas.cpp. Finds the UAS alternate setting by pipe usage
+    descriptors, selects it when all three stream pipes carry the flag, and
+    restores the previous setting otherwise. An interface that offers only
+    UAS is accepted.
+  - Command unit on the command pipe, then data and status transfers. Sense
+    data comes from the status unit. A data transfer still pending after a
+    status other than GOOD is cancelled; after GOOD it is left to complete.
+  - Completion releases the USBSTOR queue before completing the request, as
+    the bulk-only path does; the other order left a retry queued forever.
+  - Not implemented: task management, command queueing, UAS over USB 2,
+    recovery beyond cancelling the transfers of a failed command.
+
+Emulator results (same data disk attached as usb-uas or usb-storage)
+  UAS      sustained 1 MiB reads 2620 and 2341 MB/s   64 KiB 291 and 267 MB/s
+           4 KiB sequential 4406 reads/s               random 4 KiB 4301 and 4444
+  bulk     sustained 1 MiB reads 2025 and 2074 MB/s   64 KiB 268 and 267 MB/s
+           4 KiB sequential 4452 and 4336 reads/s      random 4 KiB 4310 and 4444
+  In every run a sampled checksum of the data read matched and a 32 MiB file
+  written in 1 MiB writes read back identical on the host. After the handler
+  fix: eleven UAS boots and nine bulk-only boots of this test, none stopped.
+  First-pass figures on a freshly copied disk image varied between 30 and
+  3200 MB/s in both modes; the sustained figure is the comparable one. The
+  cause of that variation was not established.
+  The emulated device offers only UAS, so the guest's usbstor.inf needed a
+  line for USB\Class_08&SubClass_06&Prot_62. A device that offers bulk-only
+  as alternate setting 0 binds through the existing line.
+  Eight host suites pass (tests/uas_tests.cpp is new).
+
+Not established
+  - Any UAS device on real hardware, including the stream array on real
+    controllers and the alternate-setting switch on a dual-mode bridge.
+  - Behaviour after a transport failure. The command is failed for the class
+    driver to retry; the device is not reset.
+  - Whether the handler race occurred on the board. It would produce the
+    unclaimed-interrupt floods the earlier on-screen reports showed.
+
+Board session, 2026-11-15 (MSI PRO B650M-P, legacy boot from the SanDisk stick)
+  Modules: xhci.sys ea75db38..., xhciboot.sys e08029bb..., usbstor.sys
+  004b0f40... (the builds described above, no test switch), with the v0.2.0
+  loader, usbhub.sys, disk.sys and hidusb.sys.
+  Counters saved by the boot bridge 690 s after start
+  (Services\XhciBoot\LastRun, read from Linux afterwards):
+    controller  interrupts  found by timer  unclaimed  flooded  polling
+    1022:43F7      211614        10            18088       0       no
+    1022:15B9          64         0               26       0       no
+    1022:15BA           1         0            32527       0       no
+    1022:15C0           1         0            32526       0       no
+    1022:15C1        8869         0             2565       0       no
+  Unclaimed calls are other devices on the shared lines (43F7 and 15C1 share
+  one, 15BA and 15C0 another). Under v0.2.0 an on-screen report had shown 43F7
+  being serviced by the timer.
+  The registry shows an ASMedia 174c:55aa SATA bridge on port 1 of the root hub
+  that carries the boot stick on port 2, and its disk enumerated three seconds
+  after the controllers started. Linux drives that bridge with UAS at 5 Gb/s on
+  the same port. The transport this driver selected for it was not recorded.
+  Reported by the user for this session: installing a program was slow while
+  running it was fast, menus sometimes opened slowly, and ReactOS hung when
+  asked to restart. No throughput figure was taken on the board.
+  The stick itself, measured from Linux on that port (vfat, synchronous
+  writes): 4 KiB writes 292 kB/s (about 71 per second), 200 files of 8 KiB at 9
+  files per second, 64 MiB in 1 MiB writes at 24 MB/s, read back at 137 MB/s.
+  Small synchronous writes are therefore slow on this medium under any driver.
+
+Still not established after that session
+  - That the bridge ran as UAS in ReactOS, and any read or write figure there.
+  - The cause of the restart hang, and whether it predates these modules.

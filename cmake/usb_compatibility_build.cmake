@@ -52,7 +52,7 @@ foreach(manifest m07-usbstor-patch-inputs.json m08-usbhub-patch-inputs.json m07-
     endforeach()
 endforeach()
 foreach(patch usbstor-transport.patch usbhub-superspeed.patch disk-shutdown.patch boot-usage.patch hidusb-cancellation.patch
-    hidusb-report-limit.patch usbstor-transfer-length.patch)
+    hidusb-report-limit.patch usbstor-transfer-length.patch usbstor-uas.patch)
     execute_process(COMMAND "${patch_tool}" -p1 --batch --forward
         WORKING_DIRECTORY "${stage}" INPUT_FILE "${XHCI_COMPAT_ROOT}/compat/reactos/${patch}"
         OUTPUT_VARIABLE patch_output ERROR_VARIABLE patch_error RESULT_VARIABLE result)
@@ -64,6 +64,10 @@ set(flags -O2 -D_CRT_NON_CONFORMING_SWPRINTFS -D__REACTOS__ -D_X86_ -D_M_IX86
     -DWINVER=0x502 -D_WIN32_WINNT=0x502 -DNTDDI_VERSION=0x05020100
     -D_USE_PSEH3=1 -fms-extensions -ffreestanding -fno-stack-protector
     -fno-strict-aliasing -Wall -Wextra -Wno-multichar -Wno-unknown-pragmas)
+if(XHCI_UAS_TRACE)
+    # Emulator diagnostics only; never used for delivered modules.
+    list(APPEND flags -DXHCI_UAS_TRACE=1)
+endif()
 if(DEFINED XHCI_TEST_HID_FIELD_LIMIT)
     # Emulator fixture only; never used for delivered modules.
     list(APPEND flags "-DXHCI_TEST_HID_FIELD_LIMIT=${XHCI_TEST_HID_FIELD_LIMIT}")
@@ -131,6 +135,8 @@ foreach(driver usbhub usbstor disk hidusb)
     elseif(driver STREQUAL "usbstor")
         compile_input("${driver}" "${XHCI_COMPAT_ROOT}/compat/reactos/usbstor/transport.cpp" TRUE)
         compile_input("${driver}" "${XHCI_COMPAT_ROOT}/src/core/storage_result.cpp" TRUE)
+        compile_input("${driver}" "${XHCI_COMPAT_ROOT}/compat/reactos/usbstor/uas_transport.cpp" TRUE)
+        compile_input("${driver}" "${XHCI_COMPAT_ROOT}/src/core/uas.cpp" TRUE)
         set(extra "${XHCI_REACTOS_BUILD}/sdk/lib/drivers/sptilib/libsptilib.a")
     elseif(driver STREQUAL "hidusb")
         compile_input("${driver}" "${XHCI_COMPAT_ROOT}/compat/reactos/hidusb/cancellation.cpp" TRUE)

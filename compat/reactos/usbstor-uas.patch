@@ -1,0 +1,182 @@
+--- a/drivers/usb/usbstor/error.c
++++ b/drivers/usb/usbstor/error.c
+@@ -103,6 +103,17 @@
+ 
+     FDODeviceExtension = FdoDevice->DeviceExtension;
+ 
++    // the bulk-only reset sequence does not apply to a UAS interface
++    if (FDODeviceExtension->Uas)
++    {
++        USBSTOR_UasAbort(FDODeviceExtension->Uas);
++        KeAcquireSpinLock(&FDODeviceExtension->CommonLock, &OldIrql);
++        FDODeviceExtension->Flags &= ~USBSTOR_FDO_FLAGS_DEVICE_RESETTING;
++        KeReleaseSpinLock(&FDODeviceExtension->CommonLock, OldIrql);
++        USBSTOR_QueueNextRequest(FdoDevice);
++        return;
++    }
++
+     for (ix = 0; ix < 3; ++ix)
+     {
+         // first perform a mass storage reset step 1 in 5.3.4 USB Mass Storage Bulk Only Specification
+@@ -174,6 +185,15 @@
+     FDODeviceExtension = (PFDO_DEVICE_EXTENSION)WorkItemData->DeviceObject->DeviceExtension;
+     ASSERT(FDODeviceExtension->Common.IsFDO);
+ 
++    if (FDODeviceExtension->Uas)
++    {
++        USBSTOR_UasAbort(FDODeviceExtension->Uas);
++        FDODeviceExtension->LastTimerActiveSrb = NULL;
++        FDODeviceExtension->TimerWorkQueueEnabled = FALSE;
++        ExFreePoolWithTag(WorkItemData, USB_STOR_TAG);
++        return;
++    }
++
+     // first perform a mass storage reset step 1 in 5.3.4 USB Mass Storage Bulk Only Specification
+     Status = USBSTOR_ResetDevice(FDODeviceExtension->LowerDeviceObject, FDODeviceExtension);
+     if (NT_SUCCESS(Status))
+--- a/drivers/usb/usbstor/fdo.c
++++ b/drivers/usb/usbstor/fdo.c
+@@ -107,6 +107,9 @@
+ 
+     DPRINT("Handling FDO removal %p\n", DeviceObject);
+ 
++    USBSTOR_UasStop(DeviceExtension->Uas);
++    DeviceExtension->Uas = NULL;
++
+     // FIXME: wait for devices finished processing
+     for (Index = 0; Index < USB_MAXCHILDREN; Index++)
+     {
+@@ -199,7 +202,8 @@
+     ASSERT(InterfaceDesc->bLength == sizeof(USB_INTERFACE_DESCRIPTOR));
+ 
+     DPRINT("bInterfaceSubClass %x\n", InterfaceDesc->bInterfaceSubClass);
+-    if (InterfaceDesc->bInterfaceProtocol != USB_PROTOCOL_BULK)
++    // 0x62: the interface offers only USB Attached SCSI
++    if (InterfaceDesc->bInterfaceProtocol != USB_PROTOCOL_BULK && InterfaceDesc->bInterfaceProtocol != 0x62)
+     {
+         DPRINT1("USB Device is not a bulk only device and is not currently supported\n");
+         return STATUS_NOT_SUPPORTED;
+@@ -221,18 +225,38 @@
+     }
+ 
+     // check if we got a bulk in + bulk out endpoint
+-    Status = USBSTOR_GetPipeHandles(DeviceExtension);
+-    if (!NT_SUCCESS(Status))
++    if (InterfaceDesc->bInterfaceProtocol == USB_PROTOCOL_BULK)
+     {
+-        DPRINT1("USBSTOR_FdoHandleStartDevice no pipe handles %x\n", Status);
+-        return Status;
++        Status = USBSTOR_GetPipeHandles(DeviceExtension);
++        if (!NT_SUCCESS(Status))
++        {
++            DPRINT1("USBSTOR_FdoHandleStartDevice no pipe handles %x\n", Status);
++            return Status;
++        }
++
++        Status = USBSTOR_GetMaxLUN(DeviceExtension->LowerDeviceObject, DeviceExtension);
++        if (!NT_SUCCESS(Status))
++        {
++            DPRINT1("USBSTOR_FdoHandleStartDevice failed to get max lun %x\n", Status);
++            return Status;
++        }
+     }
+ 
+-    Status = USBSTOR_GetMaxLUN(DeviceExtension->LowerDeviceObject, DeviceExtension);
+-    if (!NT_SUCCESS(Status))
++    // use USB Attached SCSI when the device offers it and the pipes have streams;
++    // otherwise the bulk-only pipes selected above stay in use
++    DeviceExtension->Uas = USBSTOR_UasStart(DeviceObject,
++                                            DeviceExtension->LowerDeviceObject,
++                                            DeviceExtension->ConfigurationHandle,
++                                            (PUCHAR)DeviceExtension->ConfigurationDescriptor,
++                                            DeviceExtension->ConfigurationDescriptor->wTotalLength,
++                                            InterfaceDesc->bInterfaceNumber,
++                                            InterfaceDesc->bAlternateSetting,
++                                            DeviceExtension->InterfaceInformation,
++                                            USBSTOR_UasDone);
++    if (!DeviceExtension->Uas && InterfaceDesc->bInterfaceProtocol != USB_PROTOCOL_BULK)
+     {
+-        DPRINT1("USBSTOR_FdoHandleStartDevice failed to get max lun %x\n", Status);
+-        return Status;
++        DPRINT1("USBSTOR_FdoHandleStartDevice UAS-only device without usable streams\n");
++        return STATUS_NOT_SUPPORTED;
+     }
+ 
+     // now create for each LUN a device object, 1 minimum
+--- a/drivers/usb/usbstor/scsi.c
++++ b/drivers/usb/usbstor/scsi.c
+@@ -616,5 +616,43 @@
+                 (ULONG)PDODeviceExtension->LUN);
+     }
+ 
++    if (((PFDO_DEVICE_EXTENSION)PDODeviceExtension->LowerDeviceObject->DeviceExtension)->Uas)
++    {
++        USBSTOR_UasExecute(((PFDO_DEVICE_EXTENSION)PDODeviceExtension->LowerDeviceObject->DeviceExtension)->Uas,
++                           Irp,
++                           Request,
++                           PDODeviceExtension->LUN);
++        return STATUS_PENDING;
++    }
++
+     return USBSTOR_SendCBWRequest(PDODeviceExtension->LowerDeviceObject->DeviceExtension, Irp);
+ }
++
++// The UAS transport has stored the command's result in its SRB
++VOID
++NTAPI
++USBSTOR_UasDone(
++    IN PDEVICE_OBJECT FdoDevice,
++    IN PIRP Irp)
++{
++    PIO_STACK_LOCATION IoStack = IoGetCurrentIrpStackLocation(Irp);
++    PSCSI_REQUEST_BLOCK Request = IoStack->Parameters.Scsi.Srb;
++    UCHAR SrbStatus = SRB_STATUS(Request->SrbStatus);
++
++    if (SrbStatus == SRB_STATUS_SUCCESS || SrbStatus == SRB_STATUS_DATA_OVERRUN)
++    {
++        Irp->IoStatus.Status = USBSTOR_SrbStatusToNtStatus(Request);
++    }
++    else
++    {
++        Irp->IoStatus.Status = STATUS_IO_DEVICE_ERROR;
++    }
++    Irp->IoStatus.Information = Request->DataTransferLength;
++
++    // Same order as the bulk-only completion: the queue is released before
++    // the class driver sees the result. A retry sent from its completion
++    // routine would otherwise find the device queue still busy and never start.
++    USBSTOR_QueueTerminateRequest(FdoDevice, Irp);
++    USBSTOR_QueueNextRequest(FdoDevice);
++    IoCompleteRequest(Irp, IO_NO_INCREMENT);
++}
+--- a/drivers/usb/usbstor/usbstor.h
++++ b/drivers/usb/usbstor/usbstor.h
+@@ -8,6 +8,7 @@
+ #include <usbdlib.h>
+ #include <classpnp.h>
+ #include <transport.hpp>
++#include <uas_transport.hpp>
+ 
+ #define USB_STOR_TAG 'sbsu'
+ 
+@@ -154,6 +155,7 @@
+     PIO_WORKITEM ResetDeviceWorkItem;
+     ULONG Flags;
+     IRP_CONTEXT CurrentIrpContext;
++    PVOID Uas;                                                                           // USB Attached SCSI transport, NULL for bulk-only
+ }FDO_DEVICE_EXTENSION, *PFDO_DEVICE_EXTENSION;
+ 
+ typedef struct
+@@ -276,6 +278,12 @@
+ //
+ // scsi.c routines
+ //
++VOID
++NTAPI
++USBSTOR_UasDone(
++    IN PDEVICE_OBJECT FdoDevice,
++    IN PIRP Irp);
++
+ NTSTATUS
+ USBSTOR_HandleExecuteSCSI(
+     IN PDEVICE_OBJECT DeviceObject,

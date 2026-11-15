@@ -10,7 +10,7 @@ The installer checks the reviewed ReactOS system-file hashes and exact controlle
 
 Supported PCI device IDs are AMD `1022:43F7`, `1022:15B9`, `1022:15BA`, `1022:15C0` and `1022:15C1`, restricted to the reviewed motherboard subsystem/revision profiles. See `src/core/controller.cpp` for the exact matches. The internal driver/service name remains `xhci.sys` / `xhci`.
 
-The current package supports control, bulk and interrupt transfers, USB2/USB3 logical root hubs, storage reads/writes and cache flushes. Isochronous transfers, streams/UAS and general suspend/hibernation are outside this release's scope.
+The current package supports control, bulk and interrupt transfers, USB2/USB3 logical root hubs, storage reads/writes and cache flushes over bulk-only transport, and USB Attached SCSI (UAS) on SuperSpeed devices with one command at a time. Isochronous transfers, UAS command queueing and general suspend/hibernation are outside this release's scope.
 
 Selected physical-controller storage read/write, flush and restart/readback tests passed. **Known issue:** physical unplug/reconnect recovery required the ReactOS PnP kernel patch under `compat/reactos/pnp*`; that kernel change is not installed by this package. The full installer install/rollback runtime matrix has not been completed.
 
@@ -22,11 +22,27 @@ On 2026-11-14 the board booted ReactOS to the desktop from a USB stick through t
 - **`xhci.sys`**: the firmware leaves the AMD IOMMU translating and its own USB stack running. The driver releases the IOMMU, halts firmware-owned controllers, takes ownership when the BIOS handoff goes unanswered, and polls when the shared interrupt line is unusable. Root-hub handling was corrected for the `1022:43F7` controller.
 - **`xhciboot.sys` and `hidusb.sys`**: the boot bridge admits removable boot media and shows a red on-screen report when a start or assertion fails. HIDUSB refuses the board's MYSTIC LIGHT report descriptor, which the ReactOS HID parser cannot hold.
 
-Release v0.2.0 carries these changes in two downloads. The installer updates `xhci.sys` and the four class drivers of an installed system. `B650M-P-USB-ReactOS-boot-files-i386.zip` holds the exact loader, boot bridge and drivers that booted the board, for updating a prepared USB system from another operating system; its READ-ME lists where each file goes. Installing or rolling back with the v0.2.0 installer was not exercised in ReactOS. The sequence of failures and fixes is in [evidence/physical-usb-root-boot.txt](evidence/physical-usb-root-boot.txt).
+The sequence of failures and fixes is in [evidence/physical-usb-root-boot.txt](evidence/physical-usb-root-boot.txt).
 
-**After v0.2.0 (on `main`, not yet in a release):** the board felt very slow from USB. The driver was copying data through uncached buffers, allocating a buffer per transfer, and could wrongly fall back to checking for completed transfers once per clock tick; the storage driver also limited each command to 64 KiB. These are fixed and commands may now be 1 MiB. In the emulator 64 KiB sequential reads went from 28 to about 267 MB/s. That compares driver builds; nothing is measured on the board yet. See [evidence/usb-throughput.txt](evidence/usb-throughput.txt).
+## v0.3.0: USB speed, UAS and the interrupt handler
 
-Still open: storage uses the bulk-only protocol (no UAS or streams); ReactOS sees 1 GiB of RAM; `1022:43F7` appears to run in polling mode; MYSTIC LIGHT lighting control does not work; a keyboard was sometimes absent in Linux after a ReactOS session until replugged, cause unknown; and only one board and one USB stick were tested.
+After v0.2.0 the board felt very slow from USB. Three things changed:
+
+- **Throughput.** The driver copied data through uncached buffers, allocated a buffer per transfer and could wrongly fall back to checking for completed transfers once per clock tick; the storage driver limited each command to 64 KiB. These are fixed and commands may now be 1 MiB. In the emulator 64 KiB sequential reads went from 28 to about 267 MB/s. See [evidence/usb-throughput.txt](evidence/usb-throughput.txt).
+- **USB Attached SCSI.** `xhci.sys` supports xHCI streams and the patched `usbstor.sys` uses UAS when a SuperSpeed device offers it and the controller has streams; everything else stays on bulk-only transport. One command is sent at a time, so the gain is modest: about 20% on sustained 1 MiB reads in the emulator and none on small reads.
+- **Interrupt handler.** An event arriving between the handler's two acknowledgements left the interrupt line asserted and unclaimed, which could flood the system with interrupts. The handler now claims on the interrupter's own pending bit.
+
+On 2026-11-15 the board ran from USB with these modules. The counters the boot bridge saves show all five controllers working on interrupts, none polling and none flooded; `1022:43F7`, which polled under v0.2.0, handled about 211,000 interrupts in 11.5 minutes. A UAS-capable enclosure was attached to a SuperSpeed port during that session and its disk was enumerated, but which transport it used was not recorded, and no throughput was measured on the board. See [evidence/usb-attached-scsi.txt](evidence/usb-attached-scsi.txt).
+
+In that session installing a program was slow while running it was fast, menus sometimes opened slowly, and ReactOS hung when asked to restart. Measured from Linux on the same port, the test stick itself writes only about 70 separate 4 KiB blocks per second (9 small files per second) against 137 MB/s for reads, which accounts for slow installs; the restart hang is not diagnosed.
+
+Release v0.3.0 has two downloads. The installer updates `xhci.sys` and the four class drivers of an installed system. `B650M-P-USB-ReactOS-boot-files-i386.zip` holds the exact loader, boot bridge and drivers of the 2026-11-15 session, for updating a prepared USB system from another operating system; its READ-ME lists where each file goes. Installing or rolling back with the installer was not exercised in ReactOS.
+
+## XTX 7900 setup wizard
+
+`src/tools/gpu_setup_wizard.cpp` is a graphical front end for `radeonctl.exe`, the command-line installer of a separate Radeon RX 7900 driver package that image assembly copies to the "XTX 7900 drivers" desktop folder. Build it with `-DXHCI_GPU_SETUP_WIZARD=ON` (target `xhci_gpu_setup_wizard`) and place the result beside `radeonctl.exe` as `Setup.exe`. It runs `radeonctl` commands and shows their output; it changes nothing itself. On the board it installed the driver, and the screen resolution could be changed afterwards. The Radeon package itself (miniport, display driver, `radeonctl`) is not part of this repository or its releases; `compat/rx7900/radeonctl-board-fixes.patch` records the installer changes the board needed.
+
+Still open: UAS is not confirmed on the board and has no command queueing or task management; ReactOS hung on restart in the last session; ReactOS sees 1 GiB of RAM; MYSTIC LIGHT lighting control does not work; a keyboard was sometimes absent in Linux after a ReactOS session until replugged, cause unknown; and only one board and one USB stick were tested.
 
 Build instructions are in [GETTING_STARTED.txt](GETTING_STARTED.txt); installation and recovery options are in [packaging/INSTALL.txt](packaging/INSTALL.txt). Run the installer with `--extract` to export its verified runtime payloads. No source archive or full ReactOS tree is embedded in the installer.
 

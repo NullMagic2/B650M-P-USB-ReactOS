@@ -52,6 +52,10 @@ struct Slot {
     PendingTransfer *transfers[32]{};
     KMUTEX endpoint_control[32];
     volatile LONG stop_generation[32]{};
+    // A stream endpoint's primary stream array (four contexts) and the one
+    // stream ID its ring serves; zero for an ordinary endpoint.
+    DmaBuffer stream_arrays[32];
+    UCHAR stream_ids[32]{};
     bool enabled{};
 };
 struct PendingCommand {

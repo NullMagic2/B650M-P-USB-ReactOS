@@ -6,6 +6,7 @@ option(XHCI_NATIVE_DIAGNOSTIC "Build the separate native read-only PCI diagnosti
 option(XHCI_NATIVE_CONTROLLER "Build the native WDM controller implementation" OFF)
 option(XHCI_NATIVE_BOOT "Build the separate persistent USB boot admission bridge" OFF)
 option(XHCI_NATIVE_LOADER "Relink FreeLoader with the owned BIOS disk and memory components" OFF)
+option(XHCI_GPU_SETUP_WIZARD "Build the graphical front end for the Radeon package installer" OFF)
 option(XHCI_VIRTUAL_TEST_CONTROLLER "Emulator fixture: also admit the QEMU xHCI; never deliver" OFF)
 option(XHCI_TEST_FIRST_START_RESET "Emulator fixture: reset the controller under its first start; never deliver" OFF)
 option(XHCI_TEST_INTERRUPT_FLOOD "Emulator fixture: report a foreign interrupt flood; never deliver" OFF)
@@ -101,6 +102,16 @@ if(XHCI_NATIVE_DIAGNOSTIC OR XHCI_NATIVE_CONTROLLER OR XHCI_NATIVE_BOOT)
     if(XHCI_NATIVE_BOOT)
         xhci_native_module(xhci_native_boot xhci-boot-i386.sys src/reactos/boot.cpp)
     endif()
+endif()
+if(XHCI_GPU_SETUP_WIZARD)
+    # User-mode Win32 program; needs only the MinGW runtime, no ReactOS SDK.
+    set(wizard "${CMAKE_CURRENT_BINARY_DIR}/native/RX7900-Setup-i386.exe")
+    add_custom_command(OUTPUT "${wizard}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/native"
+        COMMAND "${XHCI_NATIVE_CXX}" -std=c++17 -O2 -Wall -Wextra -Werror -municode -mwindows
+            -static -s "${PROJECT_SOURCE_DIR}/src/tools/gpu_setup_wizard.cpp" -o "${wizard}"
+        DEPENDS "${PROJECT_SOURCE_DIR}/src/tools/gpu_setup_wizard.cpp" VERBATIM)
+    add_custom_target(xhci_gpu_setup_wizard DEPENDS "${wizard}")
 endif()
 if(XHCI_NATIVE_LOADER)
     # The unchanged FreeLoader objects come from the pinned loader component;

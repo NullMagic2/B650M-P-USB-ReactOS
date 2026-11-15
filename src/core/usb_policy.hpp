@@ -17,9 +17,18 @@ struct EndpointPolicy {
     std::uint32_t bytes_per_interval{};
     std::uint16_t max_packet{};
     std::uint8_t dci{}, type{}, interval{}, burst{}, mult{};
+    // SuperSpeed bulk only: the companion's MaxStreams exponent (the endpoint
+    // supports 2^streams stream IDs), zero when it has no streams.
+    std::uint8_t streams{};
+    // Set by the configuring owner when the endpoint context was programmed
+    // with a stream array; restoration must then program it the same way.
+    bool stream_array{};
 };
+// Endpoint context dword 0 bits for a linear primary stream array of four
+// entries (MaxPStreams 1, LSA). Only stream ID 1 is given a transfer ring.
+inline constexpr std::uint32_t stream_context0 = (1u << 10) | (1u << 15);
 // No allocation or ownership transfer. A companion must immediately follow a SuperSpeed
-// non-control endpoint. Streams/isochronous endpoints are outside initial scope.
+// non-control endpoint. Isochronous endpoints are outside initial scope.
 bool endpoint_policy(UsbSpeed speed, const std::uint8_t *endpoint, std::size_t endpoint_bytes,
                      const std::uint8_t *companion, std::size_t companion_bytes,
                      EndpointPolicy &policy) noexcept;

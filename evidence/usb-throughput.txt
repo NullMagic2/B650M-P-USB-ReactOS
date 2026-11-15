@@ -58,3 +58,8 @@ Not established
   - 1 MiB commands and transfer descriptors of up to 17 TRBs on real
     controllers.
   - UAS and streams are not implemented; storage uses bulk-only transport.
+
+Later (2026-11-15)
+  UAS and streams were added and the board ran a session with these changes:
+  all five controllers interrupt-driven, 1022:43F7 included, none in timer
+  service. No throughput was measured there. See evidence/usb-attached-scsi.txt.

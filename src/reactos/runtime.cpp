@@ -261,7 +261,7 @@ NTSTATUS runtime_command(Runtime *runtime, TrbType type, UCHAR slot, UCHAR endpo
          (!runtime->slots[slot].endpoints[endpoint].memory.address ||
           (parameter & ~0xfull) < runtime->slots[slot].endpoints[endpoint].memory.logical ||
           (parameter & ~0xfull) >= runtime->slots[slot].endpoints[endpoint].memory.logical + 4096 ||
-          (parameter & 0xe))) ||
+          (parameter & 0xe) != (runtime->slots[slot].stream_ids[endpoint] ? 2u : 0u))) ||
         (!context_command && !dequeue_command && parameter)) {
         KeReleaseSpinLock(&runtime->lock, old_irql);
         return STATUS_INVALID_PARAMETER;
@@ -288,8 +288,11 @@ NTSTATUS runtime_command(Runtime *runtime, TrbType type, UCHAR slot, UCHAR endpo
     pending.result = CommandResult{};
     pending.status = STATUS_PENDING;
     KeClearEvent(&pending.event);
+    // Set TR Dequeue Pointer names the stream whose ring it repositions.
+    const ULONG stream =
+        dequeue_command ? static_cast<ULONG>(runtime->slots[slot].stream_ids[endpoint]) << 16 : 0;
     Trb trb =
-        make_trb(type, parameter, 0,
+        make_trb(type, parameter, stream,
                  flags | (static_cast<ULONG>(endpoint) << 16) | (static_cast<ULONG>(slot) << 24));
     trb.control |= (static_cast<ULONG>(slot) << 24) | (static_cast<ULONG>(endpoint) << 16);
     USHORT index = 0;
@@ -415,7 +418,7 @@ NTSTATUS runtime_cancel_commands(Runtime *runtime, ULONG generation) noexcept {
     return STATUS_SUCCESS;
 }
 NTSTATUS runtime_prepare_endpoint(Runtime *runtime, UCHAR slot, UCHAR endpoint,
-                                  ULONGLONG &logical) noexcept {
+                                  ULONGLONG &logical, bool streams) noexcept {
     logical = 0;
     if (!runtime || KeGetCurrentIrql() != PASSIVE_LEVEL || !slot || slot > runtime->caps.slots ||
         !endpoint || endpoint > 31) {
@@ -448,6 +451,31 @@ NTSTATUS runtime_prepare_endpoint(Runtime *runtime, UCHAR slot, UCHAR endpoint,
             context[3] = static_cast<ULONG>(ring.memory.logical >> 32);
             KeMemoryBarrier();
             logical = ring.memory.logical | 1;
+        }
+        owner.stream_ids[endpoint] = 0;
+        if (NT_SUCCESS(status) && streams) {
+            // Linear primary stream array: entry 0 is reserved, entry 1 holds
+            // the segment's dequeue pointer, cycle state and SCT 1; entries 2
+            // and 3 stay invalid.
+            auto &array = owner.stream_arrays[endpoint];
+            if (!array.address) {
+                status = dma_allocate(*runtime, array, 64, 64, 4096);
+            }
+            if (NT_SUCCESS(status)) {
+                auto *entries = static_cast<volatile ULONG *>(array.address);
+                for (ULONG i = 0; i < 16; ++i) {
+                    entries[i] = 0;
+                }
+                entries[4] = static_cast<ULONG>(logical & ~0xeull) | 2;
+                entries[5] = static_cast<ULONG>(logical >> 32);
+                auto *context = reinterpret_cast<ULONG *>(static_cast<UCHAR *>(owner.input.address) +
+                                                          (endpoint + 1) * runtime->caps.context_bytes);
+                context[2] = static_cast<ULONG>(array.logical);
+                context[3] = static_cast<ULONG>(array.logical >> 32);
+                KeMemoryBarrier();
+                logical = array.logical;
+                owner.stream_ids[endpoint] = 1;
+            }
         }
     }
     KeReleaseMutex(&runtime->lifecycle, FALSE);

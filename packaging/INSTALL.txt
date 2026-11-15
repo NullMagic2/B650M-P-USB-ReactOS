@@ -58,12 +58,16 @@ Use a trusted guest and publisher. Hashes identify bytes, not the publisher.
 Successful installation, source completion and emulator operation do not qualify
 physical AMD-controller operation, motherboard interrupt routing or USB durability.
 
-The v0.2.0 controller and HIDUSB modules are the bytes that booted the board
-from USB to the desktop on 2026-11-14. That boot also needs the patched
-FreeLoader and the boot bridge, which this installer does not carry; they are in
-the release's boot-files archive. Installing, resuming or rolling back with this
-installer build was not exercised in ReactOS. See
-evidence/physical-usb-root-boot.txt in the repository.
+The v0.3.0 controller and USBSTOR modules are the bytes the board ran from USB
+on 2026-11-15; USBHUB, disk and HIDUSB are those of v0.2.0. A USB-root system
+also needs the patched FreeLoader and the boot bridge, which this installer does
+not carry; they are in the release's boot-files archive. Installing, resuming or
+rolling back with this installer build was not exercised in ReactOS. USBSTOR
+uses USB Attached SCSI for a SuperSpeed device that offers it on a controller
+with streams; a device that offers only UAS also needs a usbstor.inf line for
+USB\Class_08&SubClass_06&Prot_62, which this installer does not add. See
+evidence/physical-usb-root-boot.txt and evidence/usb-attached-scsi.txt in the
+repository.
 
 Source rebuild
   Driver/installer source, compatibility patches and pinned upstream input hashes

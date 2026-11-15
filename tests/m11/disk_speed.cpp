@@ -4,7 +4,7 @@ Module: xhci.validation.m11_disk_speed
 Purpose: Time unbuffered reads and writes of one file and check the data read.
 Created: 2026-11-14
 Architecture: Win32 fixture for an emulator guest; compares driver builds only.
-Usage: disk_speed FILE REPORT [MINIMUM_UPTIME_SECONDS [COPY_TARGET]]
+Usage: disk_speed FILE REPORT [MINIMUM_UPTIME_SECONDS [COPY_TARGET [SUSTAINED_SECONDS]]]
 */
 #include <windows.h>
 #include <cstdio>
@@ -19,10 +19,40 @@ int wmain(int argc, wchar_t** argv) {
     DWORD t0 = GetTickCount();
     for (int i = 0; i < 50; ++i) Sleep(1);
     fprintf(out, "uptime_at_start_ms=%lu tick_100ns=%lu sleep1_avg_ms=%.2f\n", started, increment, (GetTickCount() - t0) / 50.0);
-    HANDLE file = CreateFileW(argv[1], GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, nullptr);
+    HANDLE file = INVALID_HANDLE_VALUE;
+    // The disk may still be mounting: retry for up to 120 seconds. A path that
+    // starts with '?' is searched on drives D to H; the copy target follows it.
+    for (int attempt = 0; attempt < 120 && file == INVALID_HANDLE_VALUE; ++attempt) {
+        for (wchar_t letter = L'D'; letter <= L'H' && file == INVALID_HANDLE_VALUE; ++letter) {
+            if (argv[1][0] == L'?' || letter == L'D') {
+                if (argv[1][0] == L'?' || argv[1][0] == letter) { /* keep */ }
+                wchar_t first = argv[1][0];
+                if (first == L'?') argv[1][0] = letter;
+                file = CreateFileW(argv[1], GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, nullptr);
+                if (file == INVALID_HANDLE_VALUE) argv[1][0] = first;
+                else if (argc > 4 && argv[4][0] == L'?') argv[4][0] = letter;
+                if (first != L'?') break;
+            }
+        }
+        if (file == INVALID_HANDLE_VALUE) Sleep(1000);
+    }
+    fprintf(out, "file=%ls\n", argv[1]);
+    fprintf(out, "opened_at_ms=%lu\n", GetTickCount());
     if (file == INVALID_HANDLE_VALUE) { fprintf(out, "open failed %lu\n", GetLastError()); fclose(out); return 1; }
     const DWORD size = GetFileSize(file, nullptr);
     void* buffer = VirtualAlloc(nullptr, 1 << 20, MEM_COMMIT, PAGE_READWRITE);
+    if (argc > 5) {
+        // Sustained 1 MiB reads for the given number of seconds, for profiling.
+        const DWORD seconds = _wtoi(argv[5]);
+        DWORD total = 0, got = 0; t0 = GetTickCount();
+        while (GetTickCount() - t0 < seconds * 1000) {
+            SetFilePointer(file, 0, nullptr, FILE_BEGIN);
+            while (total < 0x7f000000 && GetTickCount() - t0 < seconds * 1000 && ReadFile(file, buffer, 1048576, &got, nullptr) && got == 1048576) total += got >> 10;
+        }
+        const DWORD ms = GetTickCount() - t0;
+        fprintf(out, "sustained 1M reads: %lu KiB in %lu ms -> %.2f MB/s\n", total, ms, ms ? total / 1024.0 * 1000 / ms : 0);
+        fflush(out);
+    }
     const DWORD chunks[] = {1048576, 65536, 4096};
     for (DWORD chunk : chunks) {
         SetFilePointer(file, 0, nullptr, FILE_BEGIN);

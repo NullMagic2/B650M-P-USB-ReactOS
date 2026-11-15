@@ -96,13 +96,13 @@ NTSTATUS restore_locked(UsbDevice &old_device, UsbDevice &new_device) noexcept {
             }
             ULONGLONG dequeue{};
             status = runtime_prepare_endpoint(runtime, new_device.slot, static_cast<UCHAR>(dci),
-                                              dequeue);
+                                              dequeue, pipe.policy.stream_array);
             if (!NT_SUCCESS(status)) {
                 return status;
             }
             auto *endpoint =
                 reinterpret_cast<ULONG *>(static_cast<UCHAR *>(input) + (dci + 1) * stride);
-            endpoint[0] = pipe.policy.context0;
+            endpoint[0] = pipe.policy.context0 | (pipe.policy.stream_array ? stream_context0 : 0);
             endpoint[1] = pipe.policy.context1;
             endpoint[2] = static_cast<ULONG>(dequeue);
             endpoint[3] = static_cast<ULONG>(dequeue >> 32);
