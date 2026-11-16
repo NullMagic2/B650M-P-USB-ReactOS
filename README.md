@@ -41,10 +41,12 @@ This is a young project, tested on one board with one USB stick. Here is an hone
 **Works in the emulator, not yet confirmed on the board**
 
 - USB Attached SCSI (UAS). A UAS enclosure was plugged into the board and its disk appeared, but which mode it used was not recorded.
+- USB sound devices (USB Audio Class 1.0): playing, recording, volume and mute. ReactOS has a sound driver for them that it does not ship, and it needed repairs to work; [evidence/usb-sound.txt](evidence/usb-sound.txt) tells the story.
+- Devices plugged in through a USB hub.
 
 **Not there yet**
 
-- USB sound devices and webcams. The driver source can now carry their data (isochronous transfers, tried in the emulator only), but ReactOS 0.4.16 itself ships no USB sound or camera driver to use it.
+- Webcams. The driver can carry their data, but ReactOS has no USB camera driver to use it.
 - Sleep and hibernation.
 - Recovering cleanly when a device is unplugged and plugged back in. This needs a ReactOS kernel change (`compat/reactos/pnp*`) that the installer does not apply.
 - MYSTIC LIGHT lighting control.
@@ -52,8 +54,8 @@ This is a young project, tested on one board with one USB stick. Here is an hone
 **Good to know**
 
 - ReactOS sees 1 GiB of memory when started with the included boot loader. That limit is what allows the 32-bit loader to work on a machine with a lot of RAM.
-- The switch for untested controllers is in the source and will be in the next release. The current download (v0.3.0) starts only on the exact five controllers of the tested machine.
-- Restart can freeze on this board, while Shut down works. The cause is in ReactOS's own restart code, not in these drivers.
+- The current download (v0.3.0) is older than the source. It starts only on the exact five controllers of the tested machine, does not see devices behind a hub, and has no USB sound. These come with the next release; until then they can be [built from source](#for-developers).
+- Restart can freeze on this board, while Shut down works. The cause is in ReactOS's own restart code, not in these drivers. A fix for ReactOS is in the source and works in the emulator; its test on the board is still to come ([evidence/restart-reset.txt](evidence/restart-reset.txt)).
 - Installing programs onto a slow USB stick is slow. Running them afterwards is fine.
 - A keyboard was sometimes not recognised in Linux after a ReactOS session until it was replugged. The cause is unknown.
 - Going back to the original drivers with the installer has not been tried in ReactOS yet.

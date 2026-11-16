@@ -90,6 +90,27 @@ Booting the board from a USB stick
   Release v0.3.0 also provides these files prebuilt, as the installer and as
   B650M-P-USB-ReactOS-boot-files-i386.zip.
 
+USB sound and the restart fix (ReactOS's own files)
+  Two patches repair ReactOS 0.4.16 itself. They are not part of the CMake
+  build above: they need a ReactOS 0.4.16 source tree and its usual build
+  (configured here for i386, Debug, with the same i686-w64-mingw32 GCC 13).
+    patch -p1 -d <reactos-0.4.16> < compat/reactos/usb-audio.patch
+    patch -p1 -d <reactos-0.4.16> < compat/reactos/hal-acpi-reset.patch
+    ninja -C <reactos-build> usbaudio ks wdmaud wdmaud.drv halacpi
+  Sound: copy usbaudio.sys, ks.sys and wdmaud.sys to system32/drivers,
+  wdmaud.drv to system32 and compat/reactos/usbaudio/usbaudio.inf to inf.
+  ks.sys, wdmaud.sys and wdmaud.drv replace ReactOS's own; keep the originals.
+  A USB Audio Class 1.0 device then installs by itself when plugged in.
+  Emulator only so far; see evidence/usb-sound.txt for what was tested and
+  what the driver cannot do. These are debug builds: a failed assertion
+  stops the machine, so plug the device in after the desktop is up.
+  tests/sound/sndtest.c is the test program used there:
+    i686-w64-mingw32-gcc -O2 -o sndtest.exe tests/sound/sndtest.c -lwinmm
+  Restart: halacpi.dll replaces system32/hal.dll on a system that installed
+  the ACPI PIC uniprocessor HAL. hal.dll is needed to boot, so keep the
+  original where another system can put it back. See
+  evidence/restart-reset.txt.
+
   XHCI_GPU_SETUP_WIZARD=ON builds xhci_gpu_setup_wizard, the graphical front end
   for the separate Radeon package's radeonctl.exe (native/RX7900-Setup-i386.exe).
   It needs only the MinGW runtime. Place it beside radeonctl.exe as Setup.exe.

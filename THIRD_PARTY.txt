@@ -233,3 +233,23 @@ USB Attached SCSI transport (2026-11-14)
   and src/core/uas.cpp are original GPL-2.0-only C++ written against the
   public USB Attached SCSI and xHCI specifications; no other driver's source
   is copied.
+
+USB sound (2026-11-15)
+- compat/reactos/usb-audio.patch changes ReactOS 0.4.16 files, which keep
+  their upstream terms: drivers/usb/usbaudio (filter.c, pin.c, usbaudio.c,
+  usbaudio.h; GPL-2.0-or-later, original author Johannes Anderwald),
+  drivers/ksfilter/ks/pin.c, sdk/lib/drivers/sound/mmixer/controls.c,
+  dll/win32/wdmaud.drv/mmixer.c and one line of drivers/usb/CMakeLists.txt.
+  The changes were written against the public USB Audio Class 1.0
+  specification and the documented kernel streaming interfaces; no other
+  driver's source is copied.
+- compat/reactos/usbaudio/usbaudio.inf is original and refers to ReactOS's
+  own ks.inf and wdmaudio.inf. tests/sound is original GPL-2.0-only code.
+
+Restart through the ACPI reset register (2026-11-15)
+- compat/reactos/hal-acpi-reset.patch changes ReactOS 0.4.16 hal/halx86
+  (acpi/halacpi.c, generic/reboot.c, include/halp.h, legacy/halpcat.c) and
+  adds one definition to sdk/include/reactos/drivers/acpi/acpi.h. Those
+  files keep their upstream terms. The change was written against the ACPI
+  specification's description of the FADT reset register; no other
+  system's source is copied.
