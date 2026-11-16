@@ -1,0 +1,65 @@
+; usbaudio.inf: USB Audio Class 1.0 devices on ReactOS's usbaudio.sys
+
+[Version]
+Signature="$Windows NT$"
+Class=MEDIA
+ClassGUID={4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider=%Provider%
+DriverVer=11/15/2026,1.0.0.0
+
+[Manufacturer]
+%Generic%=Generic
+
+[ControlFlags]
+ExcludeFromSelect=*
+
+[Generic]
+%USBAudio.DeviceDesc%=USBAudio,USB\CLASS_01
+
+[USBAudio.NT]
+Include=ks.inf,wdmaudio.inf
+Needs=KS.Registration,WDMAUDIO.Registration
+AddReg=USBAudio.AddReg
+
+[USBAudio.AddReg]
+HKR,,AssociatedFilters,,"wdmaud,swmidi,redbook"
+HKR,,Driver,,usbaudio.sys
+HKR,Drivers,SubClasses,,"wave,midi,mixer"
+HKR,Drivers\wave\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\midi\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\mixer\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\wave\wdmaud.drv,Description,,%USBAudio.DeviceDesc%
+HKR,Drivers\midi\wdmaud.drv,Description,,%USBAudio.DeviceDesc%
+HKR,Drivers\mixer\wdmaud.drv,Description,,%USBAudio.DeviceDesc%
+
+[USBAudio.NT.Interfaces]
+AddInterface=%KSCATEGORY_AUDIO%,"GLOBAL",USBAudio.Interface
+AddInterface=%KSCATEGORY_RENDER%,"GLOBAL",USBAudio.Interface
+AddInterface=%KSCATEGORY_CAPTURE%,"GLOBAL",USBAudio.Interface
+
+[USBAudio.Interface]
+AddReg=USBAudio.Interface.AddReg
+
+[USBAudio.Interface.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%USBAudio.DeviceDesc%
+
+[USBAudio.NT.Services]
+AddService=usbaudio,0x00000002,usbaudio_Service_Inst
+
+[usbaudio_Service_Inst]
+DisplayName=%USBAudio.SvcDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%10%\system32\drivers\usbaudio.sys
+
+[Strings]
+Provider="ReactOS"
+Generic="(Generic USB Audio)"
+USBAudio.DeviceDesc="USB Audio Device"
+USBAudio.SvcDesc="USB Audio Class Driver"
+Proxy.CLSID="{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO="{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER="{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_CAPTURE="{65E8773D-8F56-11D0-A3B9-00A0C9223196}"

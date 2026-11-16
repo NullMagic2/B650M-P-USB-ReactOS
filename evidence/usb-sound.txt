@@ -1,0 +1,110 @@
+USB sound, 2026-11-15
+
+Scope
+  ReactOS 0.4.16 has the source of a USB Audio Class 1.0 driver
+  (drivers/usb/usbaudio) but does not build or ship it, and the driver could
+  not have worked: the kernel streaming library it sits on never completed a
+  queued sound buffer. compat/reactos/usb-audio.patch makes it work in the
+  emulator: playback, recording, volume and mute. The controller driver of
+  this project carries the stream (evidence/isochronous-transfers.txt) and
+  needed no change.
+  Everything below is from the emulator. No real USB sound device has been
+  tried, on the board or anywhere else.
+
+Files
+  compat/reactos/usb-audio.patch        against the ReactOS 0.4.16 source
+  compat/reactos/usbaudio/usbaudio.inf  installs the driver for USB\CLASS_01
+  tests/sound/sndtest.c                 plays, records and reads the mixer
+                                        through winmm, inside ReactOS
+  tests/sound/tonecheck.py              compares QEMU's packet capture with
+                                        the tone sndtest plays
+  tests/sound/reccheck.py               checks a recording of the test
+                                        microphone (tests/isoch/redir_device.py
+                                        --microphone)
+  The patch produces four modules: usbaudio.sys (new) and replacements for
+  ks.sys, wdmaud.sys and wdmaud.drv. GETTING_STARTED.txt says how to build
+  and place them. They are not in the installer or in any release.
+
+What was wrong, in the order it was met
+  1. No install file. usbaudio.inf binds the driver to the audio function
+     usbccgp exposes and pulls in ReactOS's own sound stack (ks.inf,
+     wdmaudio.inf).
+  2. mmixer (in wdmaud.drv and wdmaud.sys) asserted and then indexed with an
+     unset pin number on a filter whose wave path and controls are on one
+     filter, as they are for USB audio. controls.c: the pin is its own
+     destination when nothing lies behind it. The kernel copy runs only on a
+     freshly installed sound stack, where it stopped the machine.
+  3. ks.sys freed a pin twice when the driver refused to create it (first
+     open with a sample rate the device lacks): bug check 0x19.
+  4. ks.sys had only a prototype of the pin queue: frames were never given
+     back, leftover DbgBreakPoint calls, no reset, no flush on stop or close,
+     KsPinAttemptProcessing unimplemented. pin.c now keeps a count per stream
+     irp and completes it when the last stream pointer lets go, runs the
+     driver's process routine on the pin's worker under the processing mutex,
+     handles IOCTL_KS_RESET_STATE, flushes on stop and close, and frees the
+     pin on close.
+  5. usbaudio's streaming was written against that prototype. Its pin.c is
+     new: requests owned by the pin (8 of 10 packets each), render copies
+     the client's frames into them a millisecond packet at a time and lets
+     queued sound play out on stop and close; capture keeps them in flight
+     and copies packet by packet, by each packet's real length. Close now
+     succeeds, returns the interface to its idle setting and frees the pin.
+  6. Volume and mute asked for the master channel always (QEMU's card has a
+     per-channel volume and refused). filter.c maps the channel the mixer
+     names to the unit's own controls. The stream position is reported.
+  7. wdmaud.drv answered an unsupported format with a general error, on
+     which the wave mapper gives up; it now answers WAVERR_BADFORMAT and the
+     mapper converts (44.1 kHz, 22 kHz, mono, 8 bit) to what the device has.
+
+Emulator, QEMU 10.2.1/KVM, qemu-xhci, ReactOS 0.4.16 from the project's stick
+image, modules built with i686-w64-mingw32 GCC 13 (Debug)
+  Devices: QEMU usb-audio (playback, 48 kHz 16 bit stereo, mute and volume)
+  and the test microphone (capture, same format, packets of 47, 48 and 49
+  samples). Playback is judged on QEMU's own capture of the USB packets,
+  recording on the file the guest wrote.
+
+  Install on an image that never had a sound device: the second boot
+    installs both devices without a question, the third plays the logon
+    sound and passes the 20 s test below. No assertion, no bug check.
+  Playback, device opened directly at 48 kHz: 3 s, 2 s (reopened), 30 s:
+    every packet 192 bytes, every sample identical to what was played
+    (30 000 packets for the 30 s run), none failed.
+  Playback through the wave mapper: 44.1 kHz and 22.05 kHz streams and
+    ReactOS_Notify.wav (PlaySound) play, converted to 48 kHz; the logon
+    sound plays at every boot.
+  Recording: 5 s and 20 s, every sample the microphone sent, in order,
+    none missing (960 000 samples in the 20 s run).
+  Both at once on the two devices, 20 s: both results as above.
+  Mixer: one "Speaker" line with Volume and Mute. Three quarters volume on
+    the left channel lowered QEMU's output from 11295 to 9177 on that
+    channel only; mute gave silence; both restored.
+  Unplugging the card while it plays: the program ends, the device leaves
+    the list, the system shuts down normally. Plugged in again it returns
+    and plays.
+  Without the kernel debugger (normal boot entry): the 30 s run passes.
+  AC97 card with the replaced ks.sys, wdmaud.sys and wdmaud.drv: plays, the
+    mixer lists its lines as before. (Its recording returns no data in this
+    setup with the stock files as well; QEMU has no sound input here.)
+
+Not verified
+  - Any real USB sound device. The four modules and usbaudio.inf were copied
+    to the board's test stick on 2026-11-15; that stick has not been booted
+    since.
+  - Timing. QEMU's capture shows the packets but not when a real device
+    would have received them; the longest gap between two packets in a run
+    was 1.1 to 4.4 ms on the host's clock.
+  - One device with playback and recording (a headset): the two directions
+    were tested on two devices.
+  - Devices with several sample rates, more than two channels, 24 bit
+    samples, or high speed with other than one packet a millisecond.
+  - Speakers which steer the rate through a feedback endpoint: it is not
+    read, so such a device would drift.
+  - USB Audio Class 2.0 devices: not supported by this driver at all.
+
+Known gaps left in the driver
+  - Removing the device frees nothing (USBAudioPnPRemove is still a stub;
+    ReactOS logs "Leaking device"). Survived in the tests above.
+  - Only PCM. The descriptors of other formats run into assertions in
+    filter.c in a debug build, and a failed assertion stops the machine.
+  - A program that opens the device itself with a format it lacks is
+    refused; conversion happens only through the wave mapper.

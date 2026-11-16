@@ -9,6 +9,8 @@ Scope
   drivers/usb/usbaudio is not in the build and has no INF), has no USB video
   class driver, and its own USB stack leaves isochronous unimplemented. Until
   a class driver exists nothing in ReactOS issues these transfers.
+  (Later the same day ReactOS's own usbaudio driver was repaired to do so:
+  evidence/usb-sound.txt.)
 
 Controller driver
   - Endpoint context: type 1 (OUT) or 5 (IN), no retries, interval as an
