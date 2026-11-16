@@ -1,0 +1,44 @@
+Restart on the board, 2026-11-15
+
+Symptom
+  On the MSI PRO B650M-P, Restart in ReactOS 0.4.16 hung. Shut down powered
+  the board off normally.
+
+Cause
+  Restart and power-off send the same shutdown requests to every driver, and
+  power-off completes, so the drivers pass shutdown. What differs is the last
+  step. The ReactOS 0.4.16 HAL restarts the machine in one way only: it
+  writes 0xFE to the keyboard controller (port 0x64) and then halts with
+  interrupts off (hal/halx86/generic/reboot.c). It does not use the reset
+  register that the firmware describes in the ACPI FADT. A board that
+  ignores the keyboard controller pulse therefore stays halted. That this
+  board ignores it is inferred from the freeze; it was not measured.
+
+Change
+  compat/reactos/hal-acpi-reset.patch, against ReactOS 0.4.16:
+  - HalpAcpiResetSystem writes the FADT reset value to the reset register
+    (memory, I/O port or PCI configuration space of bus 0) when the table is
+    revision 2 or later, long enough, and flags the register as supported.
+  - HalpReboot uses it first, waits 100 ms, then pulses the keyboard
+    controller as before, waits again, and tries both a second time.
+  - The HALs without ACPI get a stub that reports no reset register.
+
+Emulator, QEMU/KVM, ReactOS 0.4.16 booted from USB, restarted once from
+inside the system
+  - Stock HAL, keyboard controller absent (i8042=off), pc and q35 machines:
+    halted on the "Restarting..." dialog.
+  - Patched HAL, keyboard controller absent, q35: restarts.
+  - Patched HAL, keyboard controller present, pc: restarts. (The pc machine
+    has a revision 1 FADT with no reset register, so this is the old path.)
+
+Not verified
+  - The board. The patched HAL was copied to the test stick on 2026-11-15;
+    that stick has not been booted since, so neither the fix nor an
+    unchanged boot with it is confirmed there.
+  - A reset register in memory or PCI configuration space: QEMU's is an I/O
+    port.
+  - The multiprocessor and APIC HALs. Only the ACPI PIC uniprocessor HAL
+    (halacpi), the one ReactOS 0.4.16 installs on this board, was built and
+    run.
+
+The patched HAL is not in the installer or in any release.

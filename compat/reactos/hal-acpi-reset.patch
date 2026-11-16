@@ -1,0 +1,174 @@
+--- a/hal/halx86/acpi/halacpi.c
++++ b/hal/halx86/acpi/halacpi.c
+@@ -502,6 +502,75 @@
+     HalpGetHotPlugMemoryInfo(LoaderBlock);
+ }
+ 
++/*
++ * Requests a system reset through the reset register of the FADT.
++ * Called by HalpReboot with interrupts disabled. Returns FALSE if the
++ * firmware does not describe a usable reset register, TRUE once the
++ * reset value has been written (the reset itself may take a moment).
++ */
++BOOLEAN
++NTAPI
++HalpAcpiResetSystem(VOID)
++{
++    PFADT Fadt = &HalpFixedAcpiDescTable;
++    ULONGLONG Address = Fadt->reset_reg.Address.QuadPart;
++    PHYSICAL_ADDRESS PhysicalAddress;
++    PUCHAR Mapping;
++    ULONG Device, Function, Offset;
++
++    /* The register exists since revision 2 of the table, and is optional */
++    if (!HalpProcessedACPIPhase0 ||
++        (Fadt->Header.Revision < 2) ||
++        (Fadt->Header.Length < RTL_SIZEOF_THROUGH_FIELD(FADT, reset_val)) ||
++        !(Fadt->flags & RESET_CAP) ||
++        (Address == 0))
++    {
++        return FALSE;
++    }
++
++    /* The register is one byte wide in any of the three allowed spaces */
++    switch (Fadt->reset_reg.AddressSpaceID)
++    {
++        /* System memory */
++        case 0:
++        {
++            PhysicalAddress.QuadPart = Address;
++            Mapping = HalpMapPhysicalMemory64(PhysicalAddress, 1);
++            if (!Mapping) return FALSE;
++
++            WRITE_REGISTER_UCHAR(Mapping + BYTE_OFFSET(PhysicalAddress.LowPart),
++                                 Fadt->reset_val);
++            return TRUE;
++        }
++
++        /* System I/O */
++        case 1:
++        {
++            if (Address > 0xFFFF) return FALSE;
++
++            WRITE_PORT_UCHAR((PUCHAR)(ULONG_PTR)Address, Fadt->reset_val);
++            return TRUE;
++        }
++
++        /* PCI configuration space of bus 0: device, function and offset */
++        case 2:
++        {
++            Device = (ULONG)(Address >> 32) & 0xFFFF;
++            Function = (ULONG)(Address >> 16) & 0xFFFF;
++            Offset = (ULONG)Address & 0xFFFF;
++            if ((Device > 31) || (Function > 7) || (Offset > 0xFF)) return FALSE;
++
++            WRITE_PORT_ULONG((PULONG)0xCF8,
++                             0x80000000 | (Device << 11) | (Function << 8) | (Offset & 0xFC));
++            WRITE_PORT_UCHAR((PUCHAR)(ULONG_PTR)(0xCFC + (Offset & 3)), Fadt->reset_val);
++            return TRUE;
++        }
++
++        default:
++            return FALSE;
++    }
++}
++
+ VOID
+ NTAPI
+ HalpAcpiDetectMachineSpecificActions(IN PLOADER_PARAMETER_BLOCK LoaderBlock,
+--- a/hal/halx86/generic/reboot.c
++++ b/hal/halx86/generic/reboot.c
+@@ -20,6 +20,16 @@
+     WRITE_PORT_UCHAR((PUCHAR)0x64, 0xFE);
+ };
+ 
++static VOID
++HalpWaitForReset(VOID)
++{
++    ULONG i;
++
++    /* Give the requested reset 100 ms to happen. Interrupts are disabled. */
++    for (i = 0; i < 100; i++)
++        KeStallExecutionProcessor(1000);
++}
++
+ DECLSPEC_NORETURN
+ VOID
+ HalpReboot(VOID)
+@@ -27,6 +37,7 @@
+     PHYSICAL_ADDRESS PhysicalAddress;
+     UCHAR Data;
+     PVOID ZeroPageMapping;
++    ULONG Attempt;
+ 
+     /* Map the first physical page */
+     PhysicalAddress.QuadPart = 0;
+@@ -60,9 +71,24 @@
+     WRITE_PORT_UCHAR((PUCHAR)0x70, 0x15);
+     KeStallExecutionProcessor(1);
+ 
+-    /* Flush write buffers and send the reset command */
++    /* Flush write buffers */
+     KeFlushWriteBuffer();
+-    HalpWriteResetCommand();
++
++    /*
++     * Send the reset command. Current firmware describes its reset register
++     * in the FADT and may ignore the keyboard controller pulse, so use the
++     * ACPI register first when there is one, then the keyboard controller,
++     * and try both a second time before giving up.
++     */
++    for (Attempt = 0; Attempt < 2; Attempt++)
++    {
++#ifndef _MINIHAL_
++        if (HalpAcpiResetSystem())
++            HalpWaitForReset();
++#endif
++        HalpWriteResetCommand();
++        HalpWaitForReset();
++    }
+ 
+     /* Halt the CPU */
+     __halt();
+--- a/hal/halx86/include/halp.h
++++ b/hal/halx86/include/halp.h
+@@ -496,6 +496,12 @@
+     VOID
+ );
+ 
++BOOLEAN
++NTAPI
++HalpAcpiResetSystem(
++    VOID
++);
++
+ CODE_SEG("INIT")
+ VOID
+ NTAPI
+--- a/hal/halx86/legacy/halpcat.c
++++ b/hal/halx86/legacy/halpcat.c
+@@ -38,6 +38,14 @@
+     return STATUS_SUCCESS;
+ }
+ 
++BOOLEAN
++NTAPI
++HalpAcpiResetSystem(VOID)
++{
++    /* There is no ACPI on these HALs, so no reset register either */
++    return FALSE;
++}
++
+ CODE_SEG("INIT")
+ VOID
+ NTAPI
+--- a/sdk/include/reactos/drivers/acpi/acpi.h
++++ b/sdk/include/reactos/drivers/acpi/acpi.h
+@@ -46,6 +46,7 @@
+ // FADT Flags
+ //
+ #define ACPI_TMR_VAL_EXT 	0x100
++#define RESET_CAP        	0x400
+ 
+ //
+ // BGRT Flags
