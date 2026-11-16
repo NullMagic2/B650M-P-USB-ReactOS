@@ -10,6 +10,10 @@ packet against the test client's counting pattern. The result is written as JSON
 
 QEMU keeps its own queue between this device and the guest (about 60 ms deep) and drops or
 pads packets when the two sides drift apart, so IN numbering seen by the guest may skip.
+
+With --microphone the device is a USB Audio Class 1.0 microphone instead (48 kHz, 16 bit,
+stereo, one isochronous IN endpoint on interface 1), for a sound class driver to record from.
+Its sound is a count: the left sample is the sample number, the right one its complement.
 """
 import argparse
 import json
@@ -32,8 +36,10 @@ SUCCESS, STALL = 0, 4
 CAP_CONNECT_DEVICE_VERSION, CAP_EP_INFO_MAX_PACKET_SIZE = 1, 4
 CAP_64BITS_IDS, CAP_32BITS_BULK_LENGTH = 5, 6
 SPEEDS = {"full": 1, "high": 2, "super": 3}
-VENDOR, PRODUCT = 0x1209, 0x0001
+VENDOR, PRODUCT, MICROPHONE_PRODUCT = 0x1209, 0x0001, 0x0002
 OUT_ENDPOINT, IN_ENDPOINT = 0x01, 0x81
+# Samples per millisecond packet of the microphone: 48 on average, uneven as real ones are.
+MICROPHONE_FRAMES = (48, 48, 49, 47, 48, 48, 48, 49, 48, 47)
 
 
 def index_of(endpoint):
@@ -45,6 +51,11 @@ class Device:
         self.options = options
         self.speed = options.speed
         self.payload = options.packet
+        self.microphone = options.microphone
+        # The interface whose alternate setting 1 carries the endpoints.
+        self.stream_interface = 1 if self.microphone else 0
+        self.product = MICROPHONE_PRODUCT if self.microphone else PRODUCT
+        self.sample = 0
         self.configuration = 0
         self.alternate = 0
         self.in_running = False
@@ -97,15 +108,35 @@ class Device:
         return struct.pack("<BBBBHB", 7, 5, address, 1, payload, self.options.interval)
 
     def endpoints(self):
+        if self.microphone:
+            return [IN_ENDPOINT]
         return [e for e, wanted in ((OUT_ENDPOINT, "out"), (IN_ENDPOINT, "in"))
                 if wanted in self.options.directions]
 
     def device_descriptor(self):
         usb, packet0 = {"full": (0x0110, 8), "high": (0x0200, 64), "super": (0x0300, 9)}[self.speed]
-        return struct.pack("<BBHBBBBHHHBBBB", 18, 1, usb, 0xff, 0, 0, packet0, VENDOR, PRODUCT,
-                           0x0100, 1, 2, 0, 1)
+        return struct.pack("<BBHBBBBHHHBBBB", 18, 1, usb, 0 if self.microphone else 0xff, 0, 0,
+                           packet0, VENDOR, self.product, 0x0100, 1, 2, 0, 1)
+
+    def microphone_descriptor(self):
+        # Audio control: microphone (terminal 1) -> USB streaming (terminal 2).
+        terminals = struct.pack("<BBBBHBBHBB", 12, 0x24, 2, 1, 0x0201, 0, 2, 3, 0, 0)
+        terminals += struct.pack("<BBBBHBBB", 9, 0x24, 3, 2, 0x0101, 0, 1, 0)
+        control = struct.pack("<BBBBBBBBB", 9, 4, 0, 0, 0, 1, 1, 0, 0)
+        control += struct.pack("<BBBHHBB", 9, 0x24, 1, 0x0100, 9 + len(terminals), 1, 1) + terminals
+        # Audio streaming: nothing on alternate 0, the endpoint on alternate 1.
+        stream = struct.pack("<BBBBBBBBB", 9, 4, 1, 0, 0, 1, 2, 0, 0)
+        stream += struct.pack("<BBBBBBBBB", 9, 4, 1, 1, 1, 1, 2, 0, 0)
+        stream += struct.pack("<BBBBBH", 7, 0x24, 1, 2, 1, 1)
+        stream += struct.pack("<BBBBBBBB", 11, 0x24, 2, 1, 2, 2, 16, 1) + (48000).to_bytes(3, "little")
+        stream += struct.pack("<BBBBHBBB", 9, 5, IN_ENDPOINT, 5, self.payload, 1, 0, 0)
+        stream += struct.pack("<BBBBBH", 7, 0x25, 1, 0, 0, 0)
+        body = control + stream
+        return struct.pack("<BBHBBBBB", 9, 2, 9 + len(body), 2, 1, 0, 0x80, 50) + body
 
     def configuration_descriptor(self):
+        if self.microphone:
+            return self.microphone_descriptor()
         endpoints = self.endpoints()
         body = struct.pack("<BBBBBBBBB", 9, 4, 0, 0, 0, 0xff, 0, 0, 0)
         body += struct.pack("<BBBBBBBBB", 9, 4, 0, 1, len(endpoints), 0xff, 0, 0, 0)
@@ -121,7 +152,8 @@ class Device:
     def string_descriptor(self, index):
         if index == 0:
             return struct.pack("<BBH", 4, 3, 0x0409)
-        text = {1: "xhci-reactos tests", 2: "Isochronous test device"}.get(index)
+        text = {1: "xhci-reactos tests",
+                2: "Test microphone" if self.microphone else "Isochronous test device"}.get(index)
         if text is None:
             return None
         data = text.encode("utf-16le")
@@ -156,15 +188,20 @@ class Device:
                 i = index_of(endpoint)
                 kind[i] = 1
                 interval[i] = self.options.interval
+                interface[i] = self.stream_interface
                 sizes[i] = self.payload
         return struct.pack("<32B32B32B32H", *kind, *interval, *interface, *sizes)
 
     def interface_info(self):
-        count = 1 if self.configuration else 0
-        numbers, classes = [0] * 32, [0] * 32
-        if count:
+        count = (2 if self.microphone else 1) if self.configuration else 0
+        numbers, classes, subclasses = [0] * 32, [0] * 32, [0] * 32
+        if count == 1:
             classes[0] = 0xff
-        return struct.pack("<I32B32B32B32B", count, *numbers, *classes, *([0] * 32), *([0] * 32))
+        elif count:
+            numbers[1] = 1
+            classes[0] = classes[1] = 1
+            subclasses[0], subclasses[1] = 1, 2
+        return struct.pack("<I32B32B32B32B", count, *numbers, *classes, *subclasses, *([0] * 32))
 
     # Streams ---------------------------------------------------------------------------
     def stop_streams(self):
@@ -179,6 +216,11 @@ class Device:
     def in_packet(self):
         sequence = self.in_sequence
         self.in_sequence += 1
+        if self.microphone:
+            frames = MICROPHONE_FRAMES[sequence % len(MICROPHONE_FRAMES)]
+            start = (self.sample & 0xffff) * 4
+            self.sample += frames
+            return self.cycle[start:start + frames * 4]
         # Lengths vary the way a 44.1 kHz stream does, to exercise short packets.
         lengths = self.options.lengths
         length = self.payload if not lengths else max(4, self.payload - lengths[sequence % len(lengths)])
@@ -256,8 +298,9 @@ def serve(options):
         if kind == HELLO:
             wide.append(1)
             announce()
-            send(DEVICE_CONNECT, 0, struct.pack("<BBBBHHH", SPEEDS[device.speed], 0xff, 0, 0,
-                                                VENDOR, PRODUCT, 0x0100))
+            send(DEVICE_CONNECT, 0, struct.pack("<BBBBHHH", SPEEDS[device.speed],
+                                                0 if device.microphone else 0xff, 0, 0,
+                                                VENDOR, device.product, 0x0100))
         elif kind == RESET:
             device.result["resets"] += 1
             device.stop_streams()
@@ -283,8 +326,12 @@ def serve(options):
         elif kind == GET_CONFIGURATION:
             send(CONFIGURATION_STATUS, ident, struct.pack("<BB", SUCCESS, device.configuration))
         elif kind == SET_ALT_SETTING:
+            if device.microphone and body[0] == 0 and body[1] == 0 and device.configuration:
+                # The control interface has its one setting; the stream is left as it is.
+                send(ALT_SETTING_STATUS, ident, struct.pack("<BBB", SUCCESS, 0, 0))
+                return
             device.stop_streams()
-            ok = body[0] == 0 and body[1] in (0, 1) and device.configuration
+            ok = body[0] == device.stream_interface and body[1] in (0, 1) and device.configuration
             if ok:
                 device.alternate = body[1]
             announce()
@@ -364,11 +411,16 @@ def main():
     parser.add_argument("--packet", type=int, default=192, help="bytes per service interval")
     parser.add_argument("--mult", type=int, default=0, help="SuperSpeed Mult field")
     parser.add_argument("--directions", default="in,out")
+    parser.add_argument("--microphone", action="store_true",
+                        help="be a USB Audio Class 1.0 microphone (48 kHz, 16 bit, stereo)")
     parser.add_argument("--lengths", default="0,0,0,0,0,0,0,0,0,16",
                         help="bytes each IN packet is shorter than --packet, cycled; empty for none")
     options = parser.parse_args()
     options.directions = options.directions.split(",")
     options.lengths = [int(x) for x in options.lengths.split(",")] if options.lengths else []
+    if options.microphone:
+        # Full speed, a packet each millisecond, room for the longest one.
+        options.speed, options.interval, options.packet = "full", 1, 4 * max(MICROPHONE_FRAMES)
     if not 1 <= options.interval <= 16 or options.packet < 8:
         raise SystemExit("bad interval or packet size")
     serve(options)
